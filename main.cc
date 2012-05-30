@@ -1,3 +1,10 @@
+/*
+ * RTMPServer
+ *
+ * Copyright 2011 Janne Kulmala <janne.t.kulmala@iki.fi>
+ *
+ * Program code is licensed with GNU LGPL 2.1. See COPYING.LGPL file.
+ */
 #include "amf.h"
 #include "utils.h"
 #include "rtmp.h"
