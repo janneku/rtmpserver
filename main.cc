@@ -144,16 +144,35 @@ void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 	}
 }
 
-void handle_connect(Client *client, const RTMP_Message *msg, Decoder *dec)
+void send_reply(Client *client, double txid, const AMFValue &reply = AMFValue(),
+		const AMFValue &status = AMFValue())
 {
-	double txid = amf_load_number(dec);
+	if (txid <= 0.0)
+		return;
+	Encoder invoke;
+	amf_write(&invoke, std::string("_result"));
+	amf_write(&invoke, txid);
+	amf_write(&invoke, reply);
+	amf_write(&invoke, status);
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke.buf);
+}
 
+void handle_connect(Client *client, double txid, const RTMP_Message *msg,
+		    Decoder *dec)
+{
 	amf_object_t params = amf_load_object(dec);
 	std::string app = get(params, std::string("app")).as_string();
+	std::string ver = "(unknown)";
+	AMFValue flashver = get(params, std::string("flashVer"));
+	if (flashver.type() == AMF_STRING) {
+		ver = flashver.as_string();
+	}
 
 	if (app != APP_NAME) {
 		throw std::runtime_error("Unsupported application: " + app);
 	}
+
+	printf("connect: %s (version %s)\n", app.c_str(), ver.c_str());
 
 	amf_object_t version;
 	version.insert(std::make_pair("fmsVer", std::string("FMS/4,5,1,484")));
@@ -167,23 +186,17 @@ void handle_connect(Client *client, const RTMP_Message *msg, Decoder *dec)
 	/* report support for AMF3 */
 	status.insert(std::make_pair("objectEncoding", 3.0));
 
-	Encoder reply;
-	amf_write(&reply, std::string("_result"));
-	amf_write(&reply, txid);
-	amf_write(&reply, version);
-	amf_write(&reply, status);
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
+	send_reply(client, txid, version, status);
 }
 
-void handle_fcpublish(Client *client, const RTMP_Message *msg, Decoder *dec)
+void handle_fcpublish(Client *client, double txid, const RTMP_Message *msg,
+		      Decoder *dec)
 {
 	if (publisher != NULL) {
 		throw std::runtime_error("Already have a publisher");
 	}
 	publisher = client;
 	printf("publisher connected.\n");
-
-	double txid = amf_load_number(dec);
 
 	amf_load(dec); /* NULL */
 
@@ -201,37 +214,19 @@ void handle_fcpublish(Client *client, const RTMP_Message *msg, Decoder *dec)
 	amf_write(&invoke, status);
 	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke.buf);
 
-	if (txid > 0) {
-		Encoder reply;
-		amf_write(&reply, std::string("_result"));
-		amf_write(&reply, txid);
-		amf_write_null(&reply);
-		amf_write_null(&reply);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
-	}
+	send_reply(client, txid);
 }
 
-void handle_createstream(Client *client, const RTMP_Message *msg, Decoder *dec)
+void handle_createstream(Client *client, double txid, const RTMP_Message *msg,
+			 Decoder *dec)
 {
-	double txid = amf_load_number(dec);
-
-	Encoder reply;
-	amf_write(&reply, std::string("_result"));
-	amf_write(&reply, txid);
-	amf_write_null(&reply);
-	amf_write(&reply, double(STREAM_ID));
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
+	send_reply(client, txid, AMFValue(), double(STREAM_ID));
 }
 
-void handle_publish(Client *client, const RTMP_Message *msg, Decoder *dec)
+void handle_publish(Client *client, double txid, const RTMP_Message *msg,
+		    Decoder *dec)
 {
-	double txid = amf_load_number(dec);
-
-	if (msg->endpoint != STREAM_ID) {
-		throw std::runtime_error("stream id mismatch");
-	}
-
-	amf_load(dec);
+	amf_load(dec); /* NULL */
 
 	std::string path = amf_load_string(dec);
 	debug("publish %s\n", path.c_str());
@@ -249,14 +244,7 @@ void handle_publish(Client *client, const RTMP_Message *msg, Decoder *dec)
 	amf_write(&invoke, status);
 	rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke.buf);
 
-	if (txid > 0) {
-		Encoder reply;
-		amf_write(&reply, std::string("_result"));
-		amf_write(&reply, txid);
-		amf_write_null(&reply);
-		amf_write_null(&reply);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
-	}
+	send_reply(client, txid);
 }
 
 void start_playback(Client *client)
@@ -302,10 +290,9 @@ void start_playback(Client *client)
 	}
 }
 
-void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
+void handle_play(Client *client, double txid, const RTMP_Message *msg,
+		 Decoder *dec)
 {
-	double txid = amf_load_number(dec);
-
 	if (msg->endpoint != STREAM_ID) {
 		throw std::runtime_error("stream id mismatch");
 	}
@@ -318,24 +305,12 @@ void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
 
 	start_playback(client);
 
-	if (txid > 0) {
-		Encoder reply;
-		amf_write(&reply, std::string("_result"));
-		amf_write(&reply, txid);
-		amf_write_null(&reply);
-		amf_write_null(&reply);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
-	}
+	send_reply(client, txid);
 }
 
-void handle_play2(Client *client, const RTMP_Message *msg, Decoder *dec)
+void handle_play2(Client *client, double txid, const RTMP_Message *msg,
+		  Decoder *dec)
 {
-	double txid = amf_load_number(dec);
-
-	if (msg->endpoint != STREAM_ID) {
-		throw std::runtime_error("stream id mismatch");
-	}
-
 	amf_load(dec); /* NULL */
 
 	amf_object_t params = amf_load_object(dec);
@@ -345,24 +320,12 @@ void handle_play2(Client *client, const RTMP_Message *msg, Decoder *dec)
 
 	start_playback(client);
 
-	if (txid > 0) {
-		Encoder reply;
-		amf_write(&reply, std::string("_result"));
-		amf_write(&reply, txid);
-		amf_write_null(&reply);
-		amf_write_null(&reply);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
-	}
+	send_reply(client, txid);
 }
 
-void handle_pause(Client *client, const RTMP_Message *msg, Decoder *dec)
+void handle_pause(Client *client, double txid, const RTMP_Message *msg,
+		  Decoder *dec)
 {
-	double txid = amf_load_number(dec);
-
-	if (msg->endpoint != STREAM_ID) {
-		throw std::runtime_error("stream id mismatch");
-	}
-
 	amf_load(dec); /* NULL */
 
 	bool paused = amf_load_boolean(dec);
@@ -386,14 +349,7 @@ void handle_pause(Client *client, const RTMP_Message *msg, Decoder *dec)
 		start_playback(client);
 	}
 
-	if (txid > 0) {
-		Encoder reply;
-		amf_write(&reply, std::string("_result"));
-		amf_write(&reply, txid);
-		amf_write_null(&reply);
-		amf_write_null(&reply);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
-	}
+	send_reply(client, txid);
 }
 
 void handle_setdataframe(Client *client, const RTMP_Message *msg, Decoder *dec)
@@ -424,24 +380,28 @@ void handle_setdataframe(Client *client, const RTMP_Message *msg, Decoder *dec)
 void handle_invoke(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
 	std::string method = amf_load_string(dec);
+	double txid = amf_load_number(dec);
+
 	debug("invoked %s\n", method.c_str());
+
 	if (msg->endpoint == CONTROL_ID) {
 		if (method == "connect") {
-			handle_connect(client, msg, dec);
+			handle_connect(client, txid, msg, dec);
 		} else if (method == "FCPublish") {
-			handle_fcpublish(client, msg, dec);
+			handle_fcpublish(client, txid, msg, dec);
 		} else if (method == "createStream") {
-			handle_createstream(client, msg, dec);
+			handle_createstream(client, txid, msg, dec);
 		}
+
 	} else if (msg->endpoint == STREAM_ID) {
 		if (method == "publish") {
-			handle_publish(client, msg, dec);
+			handle_publish(client, txid, msg, dec);
 		} else if (method == "play") {
-			handle_play(client, msg, dec);
+			handle_play(client, txid, msg, dec);
 		} else if (method == "play2") {
-			handle_play2(client, msg, dec);
+			handle_play2(client, txid, msg, dec);
 		} else if (method == "pause") {
-			handle_pause(client, msg, dec);
+			handle_pause(client, txid, msg, dec);
 		}
 	}
 }
