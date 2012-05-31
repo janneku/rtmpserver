@@ -33,9 +33,11 @@ struct RTMP_Message {
 
 struct Client {
 	int fd;
+	bool ready; /* Ready to receive audio and video? */
+	size_t read_chunk_len;
+	size_t write_chunk_len;
 	RTMP_Message messages[64];
 	std::string buf;
-	bool ready;
 };
 
 namespace {
@@ -128,8 +130,8 @@ void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 		}
 
 		size_t chunk = buf.size() - pos;
-		if (chunk > CHUNK_LEN)
-			chunk = CHUNK_LEN;
+		if (chunk > client->write_chunk_len)
+			chunk = client->write_chunk_len;
 		send_all(client->fd, &buf[pos], chunk);
 		
 		pos += chunk;
@@ -320,6 +322,14 @@ void handle_message(Client *client, const RTMP_Message *msg)
 	size_t pos = 0;
 
 	switch (msg->type) {
+	case MSG_SET_CHUNK:
+		if (pos + 4 > msg->buf.size()) {
+			throw std::runtime_error("Not enough data");
+		}
+		client->read_chunk_len = load_be32(&msg->buf[pos]);
+		debug("chunk size set to %zu\n", client->read_chunk_len);
+		break;
+
 	case MSG_INVOKE: {
 			std::string method = amf_load_string(msg->buf, pos);
 			debug("invoked %s\n", method.c_str());
@@ -458,8 +468,8 @@ void recv_from_client(Client *client)
 			throw std::runtime_error("message without a header");
 		}
 		size_t chunklen = msg->len - msg->buf.size();
-		if (chunklen > CHUNK_LEN)
-			chunklen = CHUNK_LEN;
+		if (chunklen > client->read_chunk_len)
+			chunklen = client->read_chunk_len;
 
 		if (client->buf.size() < header_len + chunklen) {
 			/* need more data */
@@ -491,6 +501,8 @@ Client *new_client()
 	Client *client = new Client;
 	client->ready = false;
 	client->fd = fd;
+	client->read_chunk_len = DEFAULT_CHUNK_LEN;
+	client->write_chunk_len = DEFAULT_CHUNK_LEN;
 	for (int i = 0; i < 64; ++i) {
 		client->messages[i].timestamp = 0;
 		client->messages[i].len = 0;

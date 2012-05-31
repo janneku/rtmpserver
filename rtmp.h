@@ -3,7 +3,7 @@
 
 #define PORT	1935
 
-#define CHUNK_LEN	128
+#define DEFAULT_CHUNK_LEN	128
 
 #define PACKED	__attribute__((packed))
 
@@ -11,15 +11,17 @@
 
 #define SIG_LENGTH	1536
 
+#define MSG_SET_CHUNK		0x01
 #define MSG_NUM_BYTES		0x03
 #define MSG_PING		0x04
 #define MSG_RESPONSE		0x05
 #define MSG_REQUEST		0x06
 #define MSG_AUDIO		0x08
 #define MSG_VIDEO		0x09
+#define MSG_INVOKE3		0x11	/* AMF3 */
 #define MSG_NOTIFY		0x12
 #define MSG_OBJECT		0x13
-#define MSG_INVOKE		0x14
+#define MSG_INVOKE		0x14	/* AMF0 */
 
 #define CONTROL_ID		0
 #define STREAM_ID		1337
