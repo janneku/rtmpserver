@@ -315,6 +315,27 @@ void handle_setdataframe(Client *client, const RTMP_Message *msg, Decoder *dec)
 	}
 }
 
+void handle_invoke(Client *client, const RTMP_Message *msg, Decoder *dec)
+{
+	std::string method = amf_load_string(dec);
+	debug("invoked %s\n", method.c_str());
+	if (msg->endpoint == CONTROL_ID) {
+		if (method == "connect") {
+			handle_connect(client, msg, dec);
+		} else if (method == "FCPublish") {
+			handle_fcpublish(client, msg, dec);
+		} else if (method == "createStream") {
+			handle_createstream(client, msg, dec);
+		}
+	} else if (msg->endpoint == STREAM_ID) {
+		if (method == "publish") {
+			handle_publish(client, msg, dec);
+		} else if (method == "play") {
+			handle_play(client, msg, dec);
+		}
+	}
+}
+
 void handle_message(Client *client, const RTMP_Message *msg)
 {
 	debug("RTMP message %02x, len %zu, timestamp %ld\n", msg->type, msg->len,
@@ -333,30 +354,26 @@ void handle_message(Client *client, const RTMP_Message *msg)
 
 	case MSG_INVOKE: {
 			Decoder dec;
+			dec.version = 0;
 			dec.buf = msg->buf;
 			dec.pos = 0;
-			std::string method = amf_load_string(&dec);
-			debug("invoked %s\n", method.c_str());
-			if (msg->endpoint == CONTROL_ID) {
-				if (method == "connect") {
-					handle_connect(client, msg, &dec);
-				} else if (method == "FCPublish") {
-					handle_fcpublish(client, msg, &dec);
-				} else if (method == "createStream") {
-					handle_createstream(client, msg, &dec);
-				}
-			} else if (msg->endpoint == STREAM_ID) {
-				if (method == "publish") {
-					handle_publish(client, msg, &dec);
-				} else if (method == "play") {
-					handle_play(client, msg, &dec);
-				}
-			}
+			handle_invoke(client, msg, &dec);
+		}
+		break;
+
+	case MSG_INVOKE3: {
+			hexdump(msg->buf.data(), msg->buf.size());
+			Decoder dec;
+			dec.version = 3;
+			dec.buf = msg->buf;
+			dec.pos = 0;
+			handle_invoke(client, msg, &dec);
 		}
 		break;
 
 	case MSG_NOTIFY: {
 			Decoder dec;
+			dec.version = 0;
 			dec.buf = msg->buf;
 			dec.pos = 0;
 			std::string type = amf_load_string(&dec);

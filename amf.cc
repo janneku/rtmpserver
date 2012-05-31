@@ -33,7 +33,9 @@ AMFValue::AMFValue(AMFType type) :
 		m_value.object = new amf_object_t;
 		break;
 	case AMF_NUMBER:
+	case AMF_INTEGER:
 	case AMF_NULL:
+	case AMF_UNDEFINED:
 		break;
 	default:
 		assert(0);
@@ -50,6 +52,12 @@ AMFValue::AMFValue(double n) :
 	m_type(AMF_NUMBER)
 {
 	m_value.number = n;
+}
+
+AMFValue::AMFValue(int i) :
+	m_type(AMF_INTEGER)
+{
+	m_value.integer = i;
 }
 
 AMFValue::AMFValue(bool b) :
@@ -87,7 +95,9 @@ void AMFValue::destroy()
 		break;
 	case AMF_NULL:
 	case AMF_NUMBER:
+	case AMF_INTEGER:
 	case AMF_BOOLEAN:
+	case AMF_UNDEFINED:
 		break;
 	}
 }
@@ -107,6 +117,9 @@ void AMFValue::operator = (const AMFValue &from)
 	case AMF_NUMBER:
 		m_value.number = from.m_value.number;
 		break;
+	case AMF_INTEGER:
+		m_value.integer = from.m_value.integer;
+		break;
 	case AMF_BOOLEAN:
 		m_value.boolean = from.m_value.boolean;
 		break;
@@ -121,6 +134,11 @@ void amf_write(Encoder *enc, const std::string &s)
 	uint16_t str_len = htons(s.size());
 	enc->buf.append((char *) &str_len, 2);
 	enc->buf += s;
+}
+
+void amf_write(Encoder *enc, int i)
+{
+	throw std::runtime_error("AMF0 does not have integers");
 }
 
 void amf_write(Encoder *enc, double n)
@@ -190,6 +208,9 @@ void amf_write(Encoder *enc, const AMFValue &value)
 	case AMF_NUMBER:
 		amf_write(enc, value.as_number());
 		break;
+	case AMF_INTEGER:
+		amf_write(enc, value.as_integer());
+		break;
 	case AMF_BOOLEAN:
 		amf_write(enc, value.as_boolean());
 		break;
@@ -200,21 +221,47 @@ void amf_write(Encoder *enc, const AMFValue &value)
 		amf_write_ecma(enc, value.as_object());
 		break;
 	case AMF_NULL:
-		enc->buf += char(AMF0_NULL);
+		amf_write_null(enc);
 		break;
 	}
 }
 
+unsigned int load_amf3_integer(Decoder *dec)
+{
+	unsigned int value = 0;
+	for (int i = 0; i < 4; ++i) {
+		uint8_t b = get_byte(dec);
+		if (i == 3) {
+			/* use all bits from 4th byte */
+			value = (value << 8) | b;
+			break;
+		}
+		value = (value << 7) | (b & 0x7f);
+		if ((b & 0x80) == 0)
+			break;
+	}
+	return value;
+}
+
 std::string amf_load_string(Decoder *dec)
 {
-	if (get_byte(dec) != AMF0_STRING) {
-		throw std::runtime_error("Expected a string");
+	size_t str_len = 0;
+	if (dec->version == 3) {
+		if (get_byte(dec) != AMF3_STRING) {
+			throw std::runtime_error("Expected a string");
+		}
+		str_len = load_amf3_integer(dec) / 2;
+
+	} else {
+		if (get_byte(dec) != AMF0_STRING) {
+			throw std::runtime_error("Expected a string");
+		}
+		if (dec->pos + 2 > dec->buf.size()) {
+			throw std::runtime_error("Not enough data");
+		}
+		str_len = load_be16(&dec->buf[dec->pos]);
+		dec->pos += 2;
 	}
-	if (dec->pos + 2 > dec->buf.size()) {
-		throw std::runtime_error("Not enough data");
-	}
-	size_t str_len = load_be16(&dec->buf[dec->pos]);
-	dec->pos += 2;
 	if (dec->pos + str_len > dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
@@ -240,6 +287,15 @@ double amf_load_number(Decoder *dec)
 #endif
 	dec->pos += 8;
 	return n;
+}
+
+int amf_load_integer(Decoder *dec)
+{
+	if (dec->version == 3) {
+		return load_amf3_integer(dec);
+	} else {
+		return amf_load_number(dec);
+	}
 }
 
 bool amf_load_boolean(Decoder *dec)
@@ -311,21 +367,53 @@ amf_object_t amf_load_ecma(Decoder *dec)
 AMFValue amf_load(Decoder *dec)
 {
 	uint8_t type = peek(dec);
-	switch (type) {
-	case AMF0_STRING:
-		return AMFValue(amf_load_string(dec));
-	case AMF0_NUMBER:
-		return AMFValue(amf_load_number(dec));
-	case AMF0_BOOLEAN:
-		return AMFValue(amf_load_boolean(dec));
-	case AMF0_OBJECT:
-		return AMFValue(amf_load_object(dec));
-	case AMF0_ECMA_ARRAY:
-		return AMFValue(amf_load_ecma(dec));
-	case AMF0_NULL:
-		dec->pos++;
-		return AMFValue(AMF_NULL);
-	default:
-		throw std::runtime_error("Unsupported AMF type");
+	if (dec->version == 3) {
+		switch (type) {
+		case AMF3_STRING:
+			return AMFValue(amf_load_string(dec));
+		case AMF3_NUMBER:
+			return AMFValue(amf_load_number(dec));
+		case AMF3_INTEGER:
+			return AMFValue(amf_load_integer(dec));
+		case AMF3_FALSE:
+			dec->pos++;
+			return AMFValue(false);
+		case AMF3_TRUE:
+			dec->pos++;
+			return AMFValue(true);
+		case AMF3_OBJECT:
+			return AMFValue(amf_load_object(dec));
+		case AMF3_ARRAY:
+			return AMFValue(amf_load_ecma(dec));
+		case AMF3_NULL:
+			dec->pos++;
+			return AMFValue(AMF_NULL);
+		case AMF3_UNDEFINED:
+			dec->pos++;
+			return AMFValue(AMF_UNDEFINED);
+		default:
+			throw std::runtime_error(strf("Unsupported AMF3 type: %02x", type));
+		}
+	} else {
+		switch (type) {
+		case AMF0_STRING:
+			return AMFValue(amf_load_string(dec));
+		case AMF0_NUMBER:
+			return AMFValue(amf_load_number(dec));
+		case AMF0_BOOLEAN:
+			return AMFValue(amf_load_boolean(dec));
+		case AMF0_OBJECT:
+			return AMFValue(amf_load_object(dec));
+		case AMF0_ECMA_ARRAY:
+			return AMFValue(amf_load_ecma(dec));
+		case AMF0_NULL:
+			dec->pos++;
+			return AMFValue(AMF_NULL);
+		case AMF0_UNDEFINED:
+			dec->pos++;
+			return AMFValue(AMF_UNDEFINED);
+		default:
+			throw std::runtime_error(strf("Unsupported AMF0 type: %02x", type));
+		}
 	}
 }

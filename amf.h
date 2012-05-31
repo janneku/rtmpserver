@@ -7,10 +7,12 @@
 
 enum AMFType {
 	AMF_NUMBER,
+	AMF_INTEGER,
 	AMF_BOOLEAN,
 	AMF_STRING,
 	AMF_OBJECT,
 	AMF_NULL,
+	AMF_UNDEFINED,
 	AMF_ECMA_ARRAY,
 };
 
@@ -43,7 +45,7 @@ enum {
 	AMF3_NUMBER,
 	AMF3_STRING,
 	AMF3_LEGACY_XML,
-	AMF3_DATE_OR_REFERENCE,
+	AMF3_DATE,
 	AMF3_ARRAY,
 	AMF3_OBJECT,
 	AMF3_XML,
@@ -53,6 +55,7 @@ enum {
 struct Decoder {
 	std::string buf;
 	size_t pos;
+	int version;
 };
 
 struct Encoder {
@@ -68,6 +71,7 @@ public:
 	AMFValue(AMFType type = AMF_NULL);
 	AMFValue(const std::string &s);
 	AMFValue(double n);
+	AMFValue(int i);
 	AMFValue(bool b);
 	AMFValue(const amf_object_t &object);
 	AMFValue(const AMFValue &from);
@@ -84,6 +88,11 @@ public:
 	{
 		assert(m_type == AMF_NUMBER);
 		return m_value.number;
+	}
+	double as_integer() const
+	{
+		assert(m_type == AMF_INTEGER);
+		return m_value.integer;
 	}
 	bool as_boolean() const
 	{
@@ -118,6 +127,7 @@ private:
 	union {
 		std::string *string;
 		double number;
+		int integer;
 		bool boolean;
 		amf_object_t *object;
 	} m_value;
