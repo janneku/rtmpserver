@@ -259,24 +259,12 @@ void handle_publish(Client *client, const RTMP_Message *msg, Decoder *dec)
 	}
 }
 
-void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
+void start_playback(Client *client)
 {
-	double txid = amf_load_number(dec);
-
-	if (msg->endpoint != STREAM_ID) {
-		throw std::runtime_error("stream id mismatch");
-	}
-
-	amf_load(dec); /* NULL */
-
-	std::string path = amf_load_string(dec);
-	debug("play %s\n", path.c_str());
-
 	amf_object_t status;
 	status.insert(std::make_pair("level", std::string("status")));
 	status.insert(std::make_pair("code", std::string("NetStream.Play.Reset")));
 	status.insert(std::make_pair("description", std::string("Resetting and playing stream.")));
-	status.insert(std::make_pair("details", path));
 
 	Encoder invoke;
 	amf_write(&invoke, std::string("onStatus"));
@@ -289,7 +277,6 @@ void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
 	status.insert(std::make_pair("level", std::string("status")));
 	status.insert(std::make_pair("code", std::string("NetStream.Play.Start")));
 	status.insert(std::make_pair("description", std::string("Started playing.")));
-	status.insert(std::make_pair("details", path));
 
 	invoke.buf.clear();
 	amf_write(&invoke, std::string("onStatus"));
@@ -304,6 +291,33 @@ void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
 	amf_write(&invoke, true);
 	rtmp_send(client, MSG_NOTIFY, STREAM_ID, invoke.buf);
 
+	client->playing = true;
+	client->ready = false;
+
+	if (publisher != NULL) {
+		Encoder notify;
+		amf_write(&notify, std::string("onMetaData"));
+		amf_write_ecma(&notify, metadata);
+		rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify.buf);
+	}
+}
+
+void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
+{
+	double txid = amf_load_number(dec);
+
+	if (msg->endpoint != STREAM_ID) {
+		throw std::runtime_error("stream id mismatch");
+	}
+
+	amf_load(dec); /* NULL */
+
+	std::string path = amf_load_string(dec);
+
+	debug("play %s\n", path.c_str());
+
+	start_playback(client);
+
 	if (txid > 0) {
 		Encoder reply;
 		amf_write(&reply, std::string("_result"));
@@ -312,14 +326,73 @@ void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
 		amf_write_null(&reply);
 		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
 	}
+}
 
-	client->playing = true;
+void handle_play2(Client *client, const RTMP_Message *msg, Decoder *dec)
+{
+	double txid = amf_load_number(dec);
 
-	if (publisher != NULL) {
-		Encoder notify;
-		amf_write(&notify, std::string("onMetaData"));
-		amf_write_ecma(&notify, metadata);
-		rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify.buf);
+	if (msg->endpoint != STREAM_ID) {
+		throw std::runtime_error("stream id mismatch");
+	}
+
+	amf_load(dec); /* NULL */
+
+	amf_object_t params = amf_load_object(dec);
+	std::string path = get(params, std::string("streamName")).as_string();
+
+	debug("play %s\n", path.c_str());
+
+	start_playback(client);
+
+	if (txid > 0) {
+		Encoder reply;
+		amf_write(&reply, std::string("_result"));
+		amf_write(&reply, txid);
+		amf_write_null(&reply);
+		amf_write_null(&reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
+	}
+}
+
+void handle_pause(Client *client, const RTMP_Message *msg, Decoder *dec)
+{
+	double txid = amf_load_number(dec);
+
+	if (msg->endpoint != STREAM_ID) {
+		throw std::runtime_error("stream id mismatch");
+	}
+
+	amf_load(dec); /* NULL */
+
+	bool paused = amf_load_boolean(dec);
+
+	if (paused) {
+		debug("pausing\n");
+
+		amf_object_t status;
+		status.insert(std::make_pair("level", std::string("status")));
+		status.insert(std::make_pair("code", std::string("NetStream.Pause.Notify")));
+		status.insert(std::make_pair("description", std::string("Pausing.")));
+
+		Encoder invoke;
+		amf_write(&invoke, std::string("onStatus"));
+		amf_write(&invoke, 0.0);
+		amf_write_null(&invoke);
+		amf_write(&invoke, status);
+		rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke.buf);
+		client->playing = false;
+	} else {
+		start_playback(client);
+	}
+
+	if (txid > 0) {
+		Encoder reply;
+		amf_write(&reply, std::string("_result"));
+		amf_write(&reply, txid);
+		amf_write_null(&reply);
+		amf_write_null(&reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
 	}
 }
 
@@ -365,6 +438,10 @@ void handle_invoke(Client *client, const RTMP_Message *msg, Decoder *dec)
 			handle_publish(client, msg, dec);
 		} else if (method == "play") {
 			handle_play(client, msg, dec);
+		} else if (method == "play2") {
+			handle_play2(client, msg, dec);
+		} else if (method == "pause") {
+			handle_pause(client, msg, dec);
 		}
 	}
 }
