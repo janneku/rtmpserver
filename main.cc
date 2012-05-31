@@ -139,11 +139,11 @@ void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 	}
 }
 
-void handle_connect(Client *client, const RTMP_Message *msg, size_t pos)
+void handle_connect(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
-	double txid = amf_load_number(msg->buf, pos);
+	double txid = amf_load_number(dec);
 
-	amf_object_t params = amf_load_object(msg->buf, pos);
+	amf_object_t params = amf_load_object(dec);
 	std::string app = get(params, std::string("app")).as_string();
 
 	if (app != APP_NAME) {
@@ -170,7 +170,7 @@ void handle_connect(Client *client, const RTMP_Message *msg, size_t pos)
 	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
 }
 
-void handle_fcpublish(Client *client, const RTMP_Message *msg, size_t pos)
+void handle_fcpublish(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
 	if (publisher != NULL) {
 		throw std::runtime_error("Already have a publisher");
@@ -178,11 +178,11 @@ void handle_fcpublish(Client *client, const RTMP_Message *msg, size_t pos)
 	publisher = client;
 	printf("publisher connected.\n");
 
-	double txid = amf_load_number(msg->buf, pos);
+	double txid = amf_load_number(dec);
 
-	amf_load(msg->buf, pos); /* NULL */
+	amf_load(dec); /* NULL */
 
-	std::string path = amf_load_string(msg->buf, pos);
+	std::string path = amf_load_string(dec);
 	debug("fcpublish %s\n", path.c_str());
 
 	amf_object_t status;
@@ -205,9 +205,9 @@ void handle_fcpublish(Client *client, const RTMP_Message *msg, size_t pos)
 	}
 }
 
-void handle_createstream(Client *client, const RTMP_Message *msg, size_t pos)
+void handle_createstream(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
-	double txid = amf_load_number(msg->buf, pos);
+	double txid = amf_load_number(dec);
 
 	std::string reply;
 	amf_write(reply, std::string("_result"));
@@ -217,17 +217,17 @@ void handle_createstream(Client *client, const RTMP_Message *msg, size_t pos)
 	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
 }
 
-void handle_publish(Client *client, const RTMP_Message *msg, size_t pos)
+void handle_publish(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
-	double txid = amf_load_number(msg->buf, pos);
+	double txid = amf_load_number(dec);
 
 	if (msg->endpoint != STREAM_ID) {
 		throw std::runtime_error("stream id mismatch");
 	}
 
-	amf_load(msg->buf, pos);
+	amf_load(dec);
 
-	std::string path = amf_load_string(msg->buf, pos);
+	std::string path = amf_load_string(dec);
 	debug("publish %s\n", path.c_str());
 
 	amf_object_t status;
@@ -250,17 +250,17 @@ void handle_publish(Client *client, const RTMP_Message *msg, size_t pos)
 	}
 }
 
-void handle_play(Client *client, const RTMP_Message *msg, size_t pos)
+void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
-	double txid = amf_load_number(msg->buf, pos);
+	double txid = amf_load_number(dec);
 
 	if (msg->endpoint != STREAM_ID) {
 		throw std::runtime_error("stream id mismatch");
 	}
 
-	amf_load(msg->buf, pos); /* NULL */
+	amf_load(dec); /* NULL */
 
-	std::string path = amf_load_string(msg->buf, pos);
+	std::string path = amf_load_string(dec);
 	debug("play %s\n", path.c_str());
 
 	amf_object_t status;
@@ -290,18 +290,18 @@ void handle_play(Client *client, const RTMP_Message *msg, size_t pos)
 	rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify);
 }
 
-void handle_setdataframe(Client *client, const RTMP_Message *msg, size_t pos)
+void handle_setdataframe(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
 	if (client != publisher) {
 		throw std::runtime_error("not a publisher");
 	}
 
-	std::string type = amf_load_string(msg->buf, pos);
+	std::string type = amf_load_string(dec);
 	if (type != "onMetaData") {
 		throw std::runtime_error("can only set metadata");
 	}
 
-	metadata = amf_load_ecma(msg->buf, pos);
+	metadata = amf_load_ecma(dec);
 
 	std::string notify;
 	amf_write(notify, std::string("onMetaData"));
@@ -332,32 +332,38 @@ void handle_message(Client *client, const RTMP_Message *msg)
 		break;
 
 	case MSG_INVOKE: {
-			std::string method = amf_load_string(msg->buf, pos);
+			Decoder dec;
+			dec.buf = msg->buf;
+			dec.pos = 0;
+			std::string method = amf_load_string(&dec);
 			debug("invoked %s\n", method.c_str());
 			if (msg->endpoint == CONTROL_ID) {
 				if (method == "connect") {
-					handle_connect(client, msg, pos);
+					handle_connect(client, msg, &dec);
 				} else if (method == "FCPublish") {
-					handle_fcpublish(client, msg, pos);
+					handle_fcpublish(client, msg, &dec);
 				} else if (method == "createStream") {
-					handle_createstream(client, msg, pos);
+					handle_createstream(client, msg, &dec);
 				}
 			} else if (msg->endpoint == STREAM_ID) {
 				if (method == "publish") {
-					handle_publish(client, msg, pos);
+					handle_publish(client, msg, &dec);
 				} else if (method == "play") {
-					handle_play(client, msg, pos);
+					handle_play(client, msg, &dec);
 				}
 			}
 		}
 		break;
 
 	case MSG_NOTIFY: {
-			std::string type = amf_load_string(msg->buf, pos);
+			Decoder dec;
+			dec.buf = msg->buf;
+			dec.pos = 0;
+			std::string type = amf_load_string(&dec);
 			debug("notify %s\n", type.c_str());
 			if (msg->endpoint == STREAM_ID) {
 				if (type == "@setDataFrame") {
-					handle_setdataframe(client, msg, pos);
+					handle_setdataframe(client, msg, &dec);
 				}
 			}
 		}

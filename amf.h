@@ -25,6 +25,11 @@ enum AMFType {
 	AMF_TYPED_OBJECT,
 };
 
+struct Decoder {
+	std::string buf;
+	size_t pos;
+};
+
 class AMFValue;
 
 typedef std::map<std::string, AMFValue> amf_object_t;
@@ -99,12 +104,12 @@ void amf_write(std::string &out, const amf_object_t &object);
 void amf_write_ecma(std::string &out, const amf_object_t &object);
 void amf_write(std::string &out, const AMFValue &value);
 
-std::string amf_load_string(const std::string &data, size_t &pos);
-double amf_load_number(const std::string &data, size_t &pos);
-bool amf_load_boolean(const std::string &data, size_t &pos);
-std::string amf_load_key(const std::string &data, size_t &pos);
-amf_object_t amf_load_object(const std::string &data, size_t &pos);
-amf_object_t amf_load_ecma(const std::string &data, size_t &pos);
-AMFValue amf_load(const std::string &data, size_t &pos);
+std::string amf_load_string(Decoder *dec);
+double amf_load_number(Decoder *dec);
+bool amf_load_boolean(Decoder *dec);
+std::string amf_load_key(Decoder *dec);
+amf_object_t amf_load_object(Decoder *dec);
+amf_object_t amf_load_ecma(Decoder *dec);
+AMFValue amf_load(Decoder *dec);
 
 #endif

@@ -6,20 +6,20 @@
 
 namespace {
 
-uint8_t get_byte(const std::string &data, size_t &pos)
+uint8_t get_byte(Decoder *dec)
 {
-	if (pos >= data.size()) {
+	if (dec->pos >= dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	return uint8_t(data[pos++]);
+	return uint8_t(dec->buf[dec->pos++]);
 }
 
-uint8_t peek(const std::string &data, size_t &pos)
+uint8_t peek(const Decoder *dec)
 {
-	if (pos >= data.size()) {
+	if (dec->pos >= dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	return uint8_t(data[pos]);
+	return uint8_t(dec->buf[dec->pos]);
 }
 
 }
@@ -199,125 +199,125 @@ void amf_write(std::string &out, const AMFValue &value)
 	}
 }
 
-std::string amf_load_string(const std::string &data, size_t &pos)
+std::string amf_load_string(Decoder *dec)
 {
-	if (get_byte(data, pos) != AMF_STRING) {
+	if (get_byte(dec) != AMF_STRING) {
 		throw std::runtime_error("Expected a string");
 	}
-	if (pos + 2 > data.size()) {
+	if (dec->pos + 2 > dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	size_t str_len = load_be16(&data[pos]);
-	pos += 2;
-	if (pos + str_len > data.size()) {
+	size_t str_len = load_be16(&dec->buf[dec->pos]);
+	dec->pos += 2;
+	if (dec->pos + str_len > dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	std::string s(data, pos, str_len);
-	pos += str_len;
+	std::string s(dec->buf, dec->pos, str_len);
+	dec->pos += str_len;
 	return s;
 }
 
-double amf_load_number(const std::string &data, size_t &pos)
+double amf_load_number(Decoder *dec)
 {
-	if (get_byte(data, pos) != AMF_NUMBER) {
+	if (get_byte(dec) != AMF_NUMBER) {
 		throw std::runtime_error("Expected a string");
 	}
-	if (pos + 8 > data.size()) {
+	if (dec->pos + 8 > dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	uint64_t val = ((uint64_t) load_be32(&data[pos]) << 32) |
-			load_be32(&data[pos + 4]);
+	uint64_t val = ((uint64_t) load_be32(&dec->buf[dec->pos]) << 32) |
+			load_be32(&dec->buf[dec->pos + 4]);
 	double n = 0;
 #if defined(__i386__) || defined(__x86_64__)
 	/* Flash uses same floating point format as x86 */
 	memcpy(&n, &val, 8);
 #endif
-	pos += 8;
+	dec->pos += 8;
 	return n;
 }
 
-bool amf_load_boolean(const std::string &data, size_t &pos)
+bool amf_load_boolean(Decoder *dec)
 {
-	if (get_byte(data, pos) != AMF_BOOLEAN) {
+	if (get_byte(dec) != AMF_BOOLEAN) {
 		throw std::runtime_error("Expected a boolean");
 	}
-	return get_byte(data, pos) != 0;
+	return get_byte(dec) != 0;
 }
 
-std::string amf_load_key(const std::string &data, size_t &pos)
+std::string amf_load_key(Decoder *dec)
 {
-	if (pos + 2 > data.size()) {
+	if (dec->pos + 2 > dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	size_t str_len = load_be16(&data[pos]);
-	pos += 2;
-	if (pos + str_len > data.size()) {
+	size_t str_len = load_be16(&dec->buf[dec->pos]);
+	dec->pos += 2;
+	if (dec->pos + str_len > dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	std::string s(data, pos, str_len);
-	pos += str_len;
+	std::string s(dec->buf, dec->pos, str_len);
+	dec->pos += str_len;
 	return s;
 }
 
-amf_object_t amf_load_object(const std::string &data, size_t &pos)
+amf_object_t amf_load_object(Decoder *dec)
 {
 	amf_object_t object;
-	if (get_byte(data, pos) != AMF_OBJECT) {
+	if (get_byte(dec) != AMF_OBJECT) {
 		throw std::runtime_error("Expected an object");
 	}
 	while (1) {
-		std::string key = amf_load_key(data, pos);
+		std::string key = amf_load_key(dec);
 		if (key.empty())
 			break;
-		AMFValue value = amf_load(data, pos);
+		AMFValue value = amf_load(dec);
 		object.insert(std::make_pair(key, value));
 	}
-	if (get_byte(data, pos) != AMF_OBJECT_END) {
+	if (get_byte(dec) != AMF_OBJECT_END) {
 		throw std::runtime_error("expected object end");
 	}
 	return object;
 }
 
-amf_object_t amf_load_ecma(const std::string &data, size_t &pos)
+amf_object_t amf_load_ecma(Decoder *dec)
 {
 	/* ECMA array is the same as object, with 4 extra zero bytes */
 	amf_object_t object;
-	if (get_byte(data, pos) != AMF_ECMA_ARRAY) {
+	if (get_byte(dec) != AMF_ECMA_ARRAY) {
 		throw std::runtime_error("Expected an ECMA array");
 	}
-	if (pos + 4 > data.size()) {
+	if (dec->pos + 4 > dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
-	pos += 4;
+	dec->pos += 4;
 	while (1) {
-		std::string key = amf_load_key(data, pos);
+		std::string key = amf_load_key(dec);
 		if (key.empty())
 			break;
-		AMFValue value = amf_load(data, pos);
+		AMFValue value = amf_load(dec);
 		object.insert(std::make_pair(key, value));
 	}
-	if (get_byte(data, pos) != AMF_OBJECT_END) {
+	if (get_byte(dec) != AMF_OBJECT_END) {
 		throw std::runtime_error("expected object end");
 	}
 	return object;
 }
 
-AMFValue amf_load(const std::string &data, size_t &pos)
+AMFValue amf_load(Decoder *dec)
 {
-	uint8_t type = peek(data, pos);
+	uint8_t type = peek(dec);
 	switch (type) {
 	case AMF_STRING:
-		return AMFValue(amf_load_string(data, pos));
+		return AMFValue(amf_load_string(dec));
 	case AMF_NUMBER:
-		return AMFValue(amf_load_number(data, pos));
+		return AMFValue(amf_load_number(dec));
 	case AMF_BOOLEAN:
-		return AMFValue(amf_load_boolean(data, pos));
+		return AMFValue(amf_load_boolean(dec));
 	case AMF_OBJECT:
-		return AMFValue(amf_load_object(data, pos));
+		return AMFValue(amf_load_object(dec));
 	case AMF_ECMA_ARRAY:
-		return AMFValue(amf_load_ecma(data, pos));
+		return AMFValue(amf_load_ecma(dec));
 	default:
-		pos++;
+		dec->pos++;
 		return AMFValue(AMFType(type));
 	}
 }
