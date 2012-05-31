@@ -26,14 +26,15 @@
 struct RTMP_Message {
 	uint8_t type;
 	size_t len;
-	uint32_t timestamp;
+	unsigned long timestamp;
 	uint32_t endpoint;
 	std::string buf;
 };
 
 struct Client {
 	int fd;
-	bool ready; /* Ready to receive audio and video? */
+	bool playing; /* Wants to receive the stream? */
+	bool ready; /* Wants to receive and seen a keyframe */
 	size_t read_chunk_len;
 	size_t write_chunk_len;
 	RTMP_Message messages[64];
@@ -107,7 +108,7 @@ void hexdump(const void *buf, size_t len)
 }
 
 void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
-		uint32_t timestamp, const std::string &buf)
+		const std::string &buf, unsigned long timestamp = 0)
 {
 	int channel = 4;
 
@@ -146,7 +147,7 @@ void handle_connect(Client *client, const RTMP_Message *msg, size_t pos)
 	std::string app = get(params, std::string("app")).as_string();
 
 	if (app != APP_NAME) {
-		throw std::runtime_error("Unsupported application");
+		throw std::runtime_error("Unsupported application: " + app);
 	}
 
 	amf_object_t version;
@@ -158,14 +159,15 @@ void handle_connect(Client *client, const RTMP_Message *msg, size_t pos)
 	status.insert(std::make_pair("level", std::string("status")));
 	status.insert(std::make_pair("code", std::string("NetConnection.Connect.Success")));
 	status.insert(std::make_pair("description", std::string("Connection succeeded.")));
-	status.insert(std::make_pair("objectEncoding", 0.0));
+	/* report support for AMF3 */
+	status.insert(std::make_pair("objectEncoding", 3.0));
 
 	std::string reply;
 	amf_write(reply, std::string("_result"));
 	amf_write(reply, txid);
 	amf_write(reply, version);
 	amf_write(reply, status);
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, 0, reply);
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
 }
 
 void handle_fcpublish(Client *client, const RTMP_Message *msg, size_t pos)
@@ -178,7 +180,7 @@ void handle_fcpublish(Client *client, const RTMP_Message *msg, size_t pos)
 
 	double txid = amf_load_number(msg->buf, pos);
 
-	amf_load(msg->buf, pos);
+	amf_load(msg->buf, pos); /* NULL */
 
 	std::string path = amf_load_string(msg->buf, pos);
 	debug("fcpublish %s\n", path.c_str());
@@ -187,19 +189,19 @@ void handle_fcpublish(Client *client, const RTMP_Message *msg, size_t pos)
 	status.insert(std::make_pair("code", std::string("NetStream.Publish.Start")));
 	status.insert(std::make_pair("description", path));
 
-	std::string reply;
-	amf_write(reply, std::string("onFCPublish"));
-	amf_write(reply, 0.0);
-	amf_write(reply, status);
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, 0, reply);
+	std::string invoke;
+	amf_write(invoke, std::string("onFCPublish"));
+	amf_write(invoke, 0.0);
+	amf_write(invoke, status);
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke);
 
 	if (txid > 0) {
-		reply.clear();
+		std::string reply;
 		amf_write(reply, std::string("_result"));
 		amf_write(reply, txid);
 		reply += char(AMF_NULL);
 		reply += char(AMF_NULL);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, 0, reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
 	}
 }
 
@@ -207,14 +209,12 @@ void handle_createstream(Client *client, const RTMP_Message *msg, size_t pos)
 {
 	double txid = amf_load_number(msg->buf, pos);
 
-	amf_load(msg->buf, pos);
-
 	std::string reply;
 	amf_write(reply, std::string("_result"));
 	amf_write(reply, txid);
 	reply += char(AMF_NULL);
 	amf_write(reply, double(STREAM_ID));
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, 0, reply);
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
 }
 
 void handle_publish(Client *client, const RTMP_Message *msg, size_t pos)
@@ -234,19 +234,19 @@ void handle_publish(Client *client, const RTMP_Message *msg, size_t pos)
 	status.insert(std::make_pair("code", std::string("NetStream.Publish.Start")));
 	status.insert(std::make_pair("description", std::string("Stream is now published.")));
 
-	std::string reply;
-	amf_write(reply, std::string("onStatus"));
-	amf_write(reply, 0.0);
-	amf_write(reply, status);
-	rtmp_send(client, MSG_INVOKE, STREAM_ID, 0, reply);
+	std::string invoke;
+	amf_write(invoke, std::string("onStatus"));
+	amf_write(invoke, 0.0);
+	amf_write(invoke, status);
+	rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke);
 
 	if (txid > 0) {
-		reply.clear();
+		std::string reply;
 		amf_write(reply, std::string("_result"));
 		amf_write(reply, txid);
 		reply += char(AMF_NULL);
 		reply += char(AMF_NULL);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, 0, reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
 	}
 }
 
@@ -258,7 +258,7 @@ void handle_play(Client *client, const RTMP_Message *msg, size_t pos)
 		throw std::runtime_error("stream id mismatch");
 	}
 
-	amf_load(msg->buf, pos);
+	amf_load(msg->buf, pos); /* NULL */
 
 	std::string path = amf_load_string(msg->buf, pos);
 	debug("play %s\n", path.c_str());
@@ -267,27 +267,27 @@ void handle_play(Client *client, const RTMP_Message *msg, size_t pos)
 	status.insert(std::make_pair("code", std::string("NetStream.Play.Start")));
 	status.insert(std::make_pair("description", std::string("Stream is now playing.")));
 
-	std::string reply;
-	amf_write(reply, std::string("onStatus"));
-	amf_write(reply, 0.0);
-	amf_write(reply, status);
-	rtmp_send(client, MSG_INVOKE, STREAM_ID, 0, reply);
+	std::string invoke;
+	amf_write(invoke, std::string("onStatus"));
+	amf_write(invoke, 0.0);
+	amf_write(invoke, status);
+	rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke);
 
 	if (txid > 0) {
-		reply.clear();
+		std::string reply;
 		amf_write(reply, std::string("_result"));
 		amf_write(reply, txid);
 		reply += char(AMF_NULL);
 		reply += char(AMF_NULL);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, 0, reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
 	}
 
-	client->ready = true;
+	client->playing = true;
 
 	std::string notify;
 	amf_write(notify, std::string("onMetaData"));
 	amf_write_ecma(notify, metadata);
-	rtmp_send(client, MSG_NOTIFY, STREAM_ID, 0, notify);
+	rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify);
 }
 
 void handle_setdataframe(Client *client, const RTMP_Message *msg, size_t pos)
@@ -310,14 +310,15 @@ void handle_setdataframe(Client *client, const RTMP_Message *msg, size_t pos)
 	FOR_EACH(std::vector<Client *>, i, clients) {
 		Client *client = *i;
 		if (client != NULL && client->ready) {
-			rtmp_send(client, MSG_NOTIFY, STREAM_ID, 0, notify);
+			rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify);
 		}
 	}
 }
 
 void handle_message(Client *client, const RTMP_Message *msg)
 {
-	debug("RTMP message %02x, len %zu\n", msg->type, msg->len);
+	debug("RTMP message %02x, len %zu, timestamp %ld\n", msg->type, msg->len,
+		msg->timestamp);
 
 	size_t pos = 0;
 
@@ -363,21 +364,45 @@ void handle_message(Client *client, const RTMP_Message *msg)
 		break;
 
 	case MSG_AUDIO:
-	case MSG_VIDEO:
 		if (client != publisher) {
 			throw std::runtime_error("not a publisher");
 		}
 		FOR_EACH(std::vector<Client *>, i, clients) {
-			Client *client = *i;
-			if (client != NULL && client->ready) {
-				rtmp_send(client, msg->type, STREAM_ID,
-					  msg->timestamp, msg->buf);
+			Client *receiver = *i;
+			if (receiver != NULL && receiver->ready) {
+				rtmp_send(receiver, msg->type, STREAM_ID, msg->buf,
+					msg->timestamp);
 			}
 		}
 		break;
 
+	case MSG_VIDEO: {
+		if (client != publisher) {
+			throw std::runtime_error("not a publisher");
+		}
+		uint8_t flags = msg->buf[0];
+		FOR_EACH(std::vector<Client *>, i, clients) {
+			Client *receiver = *i;
+			if (receiver != NULL && receiver->playing) {
+				if (flags >> 4 == FLV_KEY_FRAME) {
+					receiver->ready = true;
+				}
+				if (receiver->ready) {
+					rtmp_send(receiver, msg->type, STREAM_ID, msg->buf,
+						  msg->timestamp);
+				}
+			}
+		}
+		}
+		break;
+
+	case MSG_FLASH_VIDEO:
+		throw std::runtime_error("streaming FLV not supported");
+		break;
+
 	default:
 		debug("unhandled message: %02x\n", msg->type);
+		hexdump(msg->buf.data(), msg->buf.size());
 		break;
 	}
 }
@@ -450,9 +475,6 @@ void recv_from_client(Client *client)
 
 		RTMP_Message *msg = &client->messages[flags & 0x3f];
 
-		if (header_len >= 4) {
-			msg->timestamp = load_be24(header.timestamp);
-		}
 		if (header_len >= 8) {
 			msg->len = load_be24(header.msg_len);
 			if (msg->len < msg->buf.size()) {
@@ -474,6 +496,17 @@ void recv_from_client(Client *client)
 		if (client->buf.size() < header_len + chunklen) {
 			/* need more data */
 			break;
+		}
+
+		if (header_len >= 4) {
+			unsigned long ts = load_be24(header.timestamp);
+			if (ts == 0xffffff) {
+				throw std::runtime_error("ext timestamp not supported");
+			}
+			if (header_len < 12) {
+				ts += msg->timestamp;
+			}
+			msg->timestamp = ts;
 		}
 
 		msg->buf.append(client->buf.begin() + header_len,
@@ -499,6 +532,7 @@ Client *new_client()
 	}
 
 	Client *client = new Client;
+	client->playing = false;
 	client->ready = false;
 	client->fd = fd;
 	client->read_chunk_len = DEFAULT_CHUNK_LEN;

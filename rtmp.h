@@ -22,9 +22,13 @@
 #define MSG_NOTIFY		0x12
 #define MSG_OBJECT		0x13
 #define MSG_INVOKE		0x14	/* AMF0 */
+#define MSG_FLASH_VIDEO		0x16
 
 #define CONTROL_ID		0
 #define STREAM_ID		1337
+
+#define FLV_KEY_FRAME		0x01
+#define FLV_INTER_FRAME		0x02
 
 struct RTMP_Header {
 	uint8_t flags;
