@@ -114,87 +114,92 @@ void AMFValue::operator = (const AMFValue &from)
 	}
 }
 
-void amf_write(std::string &out, const std::string &s)
+void amf_write(Encoder *enc, const std::string &s)
 {
-	out += char(AMF_STRING);
+	enc->buf += char(AMF_STRING);
 	uint16_t str_len = htons(s.size());
-	out.append((char *) &str_len, 2);
-	out += s;
+	enc->buf.append((char *) &str_len, 2);
+	enc->buf += s;
 }
 
-void amf_write(std::string &out, double n)
+void amf_write(Encoder *enc, double n)
 {
-	out += char(AMF_NUMBER);
+	enc->buf += char(AMF_NUMBER);
 	uint64_t encoded = 0;
 #if defined(__i386__) || defined(__x86_64__)
 	/* Flash uses same floating point format as x86 */
 	memcpy(&encoded, &n, 8);
 #endif
 	uint32_t val = htonl(encoded >> 32);
-	out.append((char *) &val, 4);
+	enc->buf.append((char *) &val, 4);
 	val = htonl(encoded);
-	out.append((char *) &val, 4);
+	enc->buf.append((char *) &val, 4);
 }
 
-void amf_write(std::string &out, bool b)
+void amf_write(Encoder *enc, bool b)
 {
-	out += char(AMF_BOOLEAN);
-	out += char(b);
+	enc->buf += char(AMF_BOOLEAN);
+	enc->buf += char(b);
 }
 
-void amf_write_key(std::string &out, const std::string &s)
+void amf_write_key(Encoder *enc, const std::string &s)
 {
 	uint16_t str_len = htons(s.size());
-	out.append((char *) &str_len, 2);
-	out += s;
+	enc->buf.append((char *) &str_len, 2);
+	enc->buf += s;
 }
 
-void amf_write(std::string &out, const amf_object_t &object)
+void amf_write(Encoder *enc, const amf_object_t &object)
 {
-	out += char(AMF_OBJECT);
+	enc->buf += char(AMF_OBJECT);
 	for (amf_object_t::const_iterator i = object.begin();
 					  i != object.end(); ++i) {
-		amf_write_key(out, i->first);
-		amf_write(out, i->second);
+		amf_write_key(enc, i->first);
+		amf_write(enc, i->second);
 	}
-	amf_write_key(out, "");
-	out += char(AMF_OBJECT_END);
+	amf_write_key(enc, "");
+	enc->buf += char(AMF_OBJECT_END);
 }
 
-void amf_write_ecma(std::string &out, const amf_object_t &object)
+void amf_write_ecma(Encoder *enc, const amf_object_t &object)
 {
-	out += char(AMF_ECMA_ARRAY);
+	enc->buf += char(AMF_ECMA_ARRAY);
 	uint32_t zero = 0;
-	out.append((char *) &zero, 4);
+	enc->buf.append((char *) &zero, 4);
 	for (amf_object_t::const_iterator i = object.begin();
 					  i != object.end(); ++i) {
-		amf_write_key(out, i->first);
-		amf_write(out, i->second);
+		amf_write_key(enc, i->first);
+		amf_write(enc, i->second);
 	}
-	amf_write_key(out, "");
-	out += char(AMF_OBJECT_END);
+	amf_write_key(enc, "");
+	enc->buf += char(AMF_OBJECT_END);
 }
 
-void amf_write(std::string &out, const AMFValue &value)
+void amf_write_null(Encoder *enc)
+{
+	enc->buf += char(AMF_NULL);
+}
+
+void amf_write(Encoder *enc, const AMFValue &value)
 {
 	switch (value.type()) {
 	case AMF_STRING:
-		amf_write(out, value.as_string());
+		amf_write(enc, value.as_string());
 		break;
 	case AMF_NUMBER:
-		amf_write(out, value.as_number());
+		amf_write(enc, value.as_number());
 		break;
 	case AMF_BOOLEAN:
-		amf_write(out, value.as_boolean());
+		amf_write(enc, value.as_boolean());
 		break;
 	case AMF_OBJECT:
-		amf_write(out, value.as_object());
+		amf_write(enc, value.as_object());
 		break;
 	case AMF_ECMA_ARRAY:
-		amf_write_ecma(out, value.as_object());
+		amf_write_ecma(enc, value.as_object());
 		break;
 	default:
-		out += char(value.type());
+		enc->buf += char(value.type());
 		break;
 	}
 }

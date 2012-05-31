@@ -162,12 +162,12 @@ void handle_connect(Client *client, const RTMP_Message *msg, Decoder *dec)
 	/* report support for AMF3 */
 	status.insert(std::make_pair("objectEncoding", 3.0));
 
-	std::string reply;
-	amf_write(reply, std::string("_result"));
-	amf_write(reply, txid);
-	amf_write(reply, version);
-	amf_write(reply, status);
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
+	Encoder reply;
+	amf_write(&reply, std::string("_result"));
+	amf_write(&reply, txid);
+	amf_write(&reply, version);
+	amf_write(&reply, status);
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
 }
 
 void handle_fcpublish(Client *client, const RTMP_Message *msg, Decoder *dec)
@@ -189,19 +189,19 @@ void handle_fcpublish(Client *client, const RTMP_Message *msg, Decoder *dec)
 	status.insert(std::make_pair("code", std::string("NetStream.Publish.Start")));
 	status.insert(std::make_pair("description", path));
 
-	std::string invoke;
-	amf_write(invoke, std::string("onFCPublish"));
-	amf_write(invoke, 0.0);
-	amf_write(invoke, status);
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke);
+	Encoder invoke;
+	amf_write(&invoke, std::string("onFCPublish"));
+	amf_write(&invoke, 0.0);
+	amf_write(&invoke, status);
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke.buf);
 
 	if (txid > 0) {
-		std::string reply;
-		amf_write(reply, std::string("_result"));
-		amf_write(reply, txid);
-		reply += char(AMF_NULL);
-		reply += char(AMF_NULL);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
+		Encoder reply;
+		amf_write(&reply, std::string("_result"));
+		amf_write(&reply, txid);
+		amf_write_null(&reply);
+		amf_write_null(&reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
 	}
 }
 
@@ -209,12 +209,12 @@ void handle_createstream(Client *client, const RTMP_Message *msg, Decoder *dec)
 {
 	double txid = amf_load_number(dec);
 
-	std::string reply;
-	amf_write(reply, std::string("_result"));
-	amf_write(reply, txid);
-	reply += char(AMF_NULL);
-	amf_write(reply, double(STREAM_ID));
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
+	Encoder reply;
+	amf_write(&reply, std::string("_result"));
+	amf_write(&reply, txid);
+	amf_write_null(&reply);
+	amf_write(&reply, double(STREAM_ID));
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
 }
 
 void handle_publish(Client *client, const RTMP_Message *msg, Decoder *dec)
@@ -234,19 +234,19 @@ void handle_publish(Client *client, const RTMP_Message *msg, Decoder *dec)
 	status.insert(std::make_pair("code", std::string("NetStream.Publish.Start")));
 	status.insert(std::make_pair("description", std::string("Stream is now published.")));
 
-	std::string invoke;
-	amf_write(invoke, std::string("onStatus"));
-	amf_write(invoke, 0.0);
-	amf_write(invoke, status);
-	rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke);
+	Encoder invoke;
+	amf_write(&invoke, std::string("onStatus"));
+	amf_write(&invoke, 0.0);
+	amf_write(&invoke, status);
+	rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke.buf);
 
 	if (txid > 0) {
-		std::string reply;
-		amf_write(reply, std::string("_result"));
-		amf_write(reply, txid);
-		reply += char(AMF_NULL);
-		reply += char(AMF_NULL);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
+		Encoder reply;
+		amf_write(&reply, std::string("_result"));
+		amf_write(&reply, txid);
+		amf_write_null(&reply);
+		amf_write_null(&reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
 	}
 }
 
@@ -267,27 +267,27 @@ void handle_play(Client *client, const RTMP_Message *msg, Decoder *dec)
 	status.insert(std::make_pair("code", std::string("NetStream.Play.Start")));
 	status.insert(std::make_pair("description", std::string("Stream is now playing.")));
 
-	std::string invoke;
-	amf_write(invoke, std::string("onStatus"));
-	amf_write(invoke, 0.0);
-	amf_write(invoke, status);
-	rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke);
+	Encoder invoke;
+	amf_write(&invoke, std::string("onStatus"));
+	amf_write(&invoke, 0.0);
+	amf_write(&invoke, status);
+	rtmp_send(client, MSG_INVOKE, STREAM_ID, invoke.buf);
 
 	if (txid > 0) {
-		std::string reply;
-		amf_write(reply, std::string("_result"));
-		amf_write(reply, txid);
-		reply += char(AMF_NULL);
-		reply += char(AMF_NULL);
-		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply);
+		Encoder reply;
+		amf_write(&reply, std::string("_result"));
+		amf_write(&reply, txid);
+		amf_write_null(&reply);
+		amf_write_null(&reply);
+		rtmp_send(client, MSG_INVOKE, CONTROL_ID, reply.buf);
 	}
 
 	client->playing = true;
 
-	std::string notify;
-	amf_write(notify, std::string("onMetaData"));
-	amf_write_ecma(notify, metadata);
-	rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify);
+	Encoder notify;
+	amf_write(&notify, std::string("onMetaData"));
+	amf_write_ecma(&notify, metadata);
+	rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify.buf);
 }
 
 void handle_setdataframe(Client *client, const RTMP_Message *msg, Decoder *dec)
@@ -303,14 +303,14 @@ void handle_setdataframe(Client *client, const RTMP_Message *msg, Decoder *dec)
 
 	metadata = amf_load_ecma(dec);
 
-	std::string notify;
-	amf_write(notify, std::string("onMetaData"));
-	amf_write_ecma(notify, metadata);
+	Encoder notify;
+	amf_write(&notify, std::string("onMetaData"));
+	amf_write_ecma(&notify, metadata);
 
 	FOR_EACH(std::vector<Client *>, i, clients) {
 		Client *client = *i;
 		if (client != NULL && client->ready) {
-			rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify);
+			rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify.buf);
 		}
 	}
 }

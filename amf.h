@@ -30,6 +30,10 @@ struct Decoder {
 	size_t pos;
 };
 
+struct Encoder {
+	std::string buf;
+};
+
 class AMFValue;
 
 typedef std::map<std::string, AMFValue> amf_object_t;
@@ -96,13 +100,14 @@ private:
 	void destroy();
 };
 
-void amf_write(std::string &out, const std::string &s);
-void amf_write(std::string &out, double n);
-void amf_write(std::string &out, bool b);
-void amf_write_key(std::string &out, const std::string &s);
-void amf_write(std::string &out, const amf_object_t &object);
-void amf_write_ecma(std::string &out, const amf_object_t &object);
-void amf_write(std::string &out, const AMFValue &value);
+void amf_write(Encoder *enc, const std::string &s);
+void amf_write(Encoder *enc, double n);
+void amf_write(Encoder *enc, bool b);
+void amf_write_key(Encoder *enc, const std::string &s);
+void amf_write(Encoder *enc, const amf_object_t &object);
+void amf_write_ecma(Encoder *enc, const amf_object_t &object);
+void amf_write_null(Encoder *enc);
+void amf_write(Encoder *enc, const AMFValue &value);
 
 std::string amf_load_string(Decoder *dec);
 double amf_load_number(Decoder *dec);
