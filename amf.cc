@@ -6,20 +6,26 @@
 
 namespace {
 
-uint8_t get_byte(Decoder *dec)
-{
-	if (dec->pos >= dec->buf.size()) {
-		throw std::runtime_error("Not enough data");
-	}
-	return uint8_t(dec->buf[dec->pos++]);
-}
-
 uint8_t peek(const Decoder *dec)
 {
 	if (dec->pos >= dec->buf.size()) {
 		throw std::runtime_error("Not enough data");
 	}
 	return uint8_t(dec->buf[dec->pos]);
+}
+
+uint8_t get_byte(Decoder *dec)
+{
+	if (dec->version == 0 && peek(dec) == AMF0_SWITCH_AMF3) {
+		debug("entering AMF3 mode\n");
+		dec->pos++;
+		dec->version = 3;
+	}
+
+	if (dec->pos >= dec->buf.size()) {
+		throw std::runtime_error("Not enough data");
+	}
+	return uint8_t(dec->buf[dec->pos++]);
 }
 
 }
@@ -246,14 +252,15 @@ unsigned int load_amf3_integer(Decoder *dec)
 std::string amf_load_string(Decoder *dec)
 {
 	size_t str_len = 0;
+	uint8_t type = get_byte(dec);
 	if (dec->version == 3) {
-		if (get_byte(dec) != AMF3_STRING) {
+		if (type != AMF3_STRING) {
 			throw std::runtime_error("Expected a string");
 		}
 		str_len = load_amf3_integer(dec) / 2;
 
 	} else {
-		if (get_byte(dec) != AMF0_STRING) {
+		if (type != AMF0_STRING) {
 			throw std::runtime_error("Expected a string");
 		}
 		if (dec->pos + 2 > dec->buf.size()) {
