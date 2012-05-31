@@ -364,9 +364,9 @@ void handle_message(Client *client, const RTMP_Message *msg)
 	case MSG_INVOKE3: {
 			hexdump(msg->buf.data(), msg->buf.size());
 			Decoder dec;
-			dec.version = 3;
+			dec.version = 0;
 			dec.buf = msg->buf;
-			dec.pos = 0;
+			dec.pos = 1;
 			handle_invoke(client, msg, &dec);
 		}
 		break;
