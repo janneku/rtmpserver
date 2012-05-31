@@ -34,7 +34,6 @@ AMFValue::AMFValue(AMFType type) :
 		break;
 	case AMF_NUMBER:
 	case AMF_NULL:
-	case AMF_UNDEFINED:
 		break;
 	default:
 		assert(0);
@@ -86,7 +85,9 @@ void AMFValue::destroy()
 	case AMF_ECMA_ARRAY:
 		delete m_value.object;
 		break;
-	default:
+	case AMF_NULL:
+	case AMF_NUMBER:
+	case AMF_BOOLEAN:
 		break;
 	}
 }
@@ -116,7 +117,7 @@ void AMFValue::operator = (const AMFValue &from)
 
 void amf_write(Encoder *enc, const std::string &s)
 {
-	enc->buf += char(AMF_STRING);
+	enc->buf += char(AMF0_STRING);
 	uint16_t str_len = htons(s.size());
 	enc->buf.append((char *) &str_len, 2);
 	enc->buf += s;
@@ -124,7 +125,7 @@ void amf_write(Encoder *enc, const std::string &s)
 
 void amf_write(Encoder *enc, double n)
 {
-	enc->buf += char(AMF_NUMBER);
+	enc->buf += char(AMF0_NUMBER);
 	uint64_t encoded = 0;
 #if defined(__i386__) || defined(__x86_64__)
 	/* Flash uses same floating point format as x86 */
@@ -138,7 +139,7 @@ void amf_write(Encoder *enc, double n)
 
 void amf_write(Encoder *enc, bool b)
 {
-	enc->buf += char(AMF_BOOLEAN);
+	enc->buf += char(AMF0_BOOLEAN);
 	enc->buf += char(b);
 }
 
@@ -151,19 +152,19 @@ void amf_write_key(Encoder *enc, const std::string &s)
 
 void amf_write(Encoder *enc, const amf_object_t &object)
 {
-	enc->buf += char(AMF_OBJECT);
+	enc->buf += char(AMF0_OBJECT);
 	for (amf_object_t::const_iterator i = object.begin();
 					  i != object.end(); ++i) {
 		amf_write_key(enc, i->first);
 		amf_write(enc, i->second);
 	}
 	amf_write_key(enc, "");
-	enc->buf += char(AMF_OBJECT_END);
+	enc->buf += char(AMF0_OBJECT_END);
 }
 
 void amf_write_ecma(Encoder *enc, const amf_object_t &object)
 {
-	enc->buf += char(AMF_ECMA_ARRAY);
+	enc->buf += char(AMF0_ECMA_ARRAY);
 	uint32_t zero = 0;
 	enc->buf.append((char *) &zero, 4);
 	for (amf_object_t::const_iterator i = object.begin();
@@ -172,12 +173,12 @@ void amf_write_ecma(Encoder *enc, const amf_object_t &object)
 		amf_write(enc, i->second);
 	}
 	amf_write_key(enc, "");
-	enc->buf += char(AMF_OBJECT_END);
+	enc->buf += char(AMF0_OBJECT_END);
 }
 
 void amf_write_null(Encoder *enc)
 {
-	enc->buf += char(AMF_NULL);
+	enc->buf += char(AMF0_NULL);
 }
 
 void amf_write(Encoder *enc, const AMFValue &value)
@@ -198,15 +199,15 @@ void amf_write(Encoder *enc, const AMFValue &value)
 	case AMF_ECMA_ARRAY:
 		amf_write_ecma(enc, value.as_object());
 		break;
-	default:
-		enc->buf += char(value.type());
+	case AMF_NULL:
+		enc->buf += char(AMF0_NULL);
 		break;
 	}
 }
 
 std::string amf_load_string(Decoder *dec)
 {
-	if (get_byte(dec) != AMF_STRING) {
+	if (get_byte(dec) != AMF0_STRING) {
 		throw std::runtime_error("Expected a string");
 	}
 	if (dec->pos + 2 > dec->buf.size()) {
@@ -224,7 +225,7 @@ std::string amf_load_string(Decoder *dec)
 
 double amf_load_number(Decoder *dec)
 {
-	if (get_byte(dec) != AMF_NUMBER) {
+	if (get_byte(dec) != AMF0_NUMBER) {
 		throw std::runtime_error("Expected a string");
 	}
 	if (dec->pos + 8 > dec->buf.size()) {
@@ -243,7 +244,7 @@ double amf_load_number(Decoder *dec)
 
 bool amf_load_boolean(Decoder *dec)
 {
-	if (get_byte(dec) != AMF_BOOLEAN) {
+	if (get_byte(dec) != AMF0_BOOLEAN) {
 		throw std::runtime_error("Expected a boolean");
 	}
 	return get_byte(dec) != 0;
@@ -267,7 +268,7 @@ std::string amf_load_key(Decoder *dec)
 amf_object_t amf_load_object(Decoder *dec)
 {
 	amf_object_t object;
-	if (get_byte(dec) != AMF_OBJECT) {
+	if (get_byte(dec) != AMF0_OBJECT) {
 		throw std::runtime_error("Expected an object");
 	}
 	while (1) {
@@ -277,7 +278,7 @@ amf_object_t amf_load_object(Decoder *dec)
 		AMFValue value = amf_load(dec);
 		object.insert(std::make_pair(key, value));
 	}
-	if (get_byte(dec) != AMF_OBJECT_END) {
+	if (get_byte(dec) != AMF0_OBJECT_END) {
 		throw std::runtime_error("expected object end");
 	}
 	return object;
@@ -287,7 +288,7 @@ amf_object_t amf_load_ecma(Decoder *dec)
 {
 	/* ECMA array is the same as object, with 4 extra zero bytes */
 	amf_object_t object;
-	if (get_byte(dec) != AMF_ECMA_ARRAY) {
+	if (get_byte(dec) != AMF0_ECMA_ARRAY) {
 		throw std::runtime_error("Expected an ECMA array");
 	}
 	if (dec->pos + 4 > dec->buf.size()) {
@@ -301,7 +302,7 @@ amf_object_t amf_load_ecma(Decoder *dec)
 		AMFValue value = amf_load(dec);
 		object.insert(std::make_pair(key, value));
 	}
-	if (get_byte(dec) != AMF_OBJECT_END) {
+	if (get_byte(dec) != AMF0_OBJECT_END) {
 		throw std::runtime_error("expected object end");
 	}
 	return object;
@@ -311,18 +312,20 @@ AMFValue amf_load(Decoder *dec)
 {
 	uint8_t type = peek(dec);
 	switch (type) {
-	case AMF_STRING:
+	case AMF0_STRING:
 		return AMFValue(amf_load_string(dec));
-	case AMF_NUMBER:
+	case AMF0_NUMBER:
 		return AMFValue(amf_load_number(dec));
-	case AMF_BOOLEAN:
+	case AMF0_BOOLEAN:
 		return AMFValue(amf_load_boolean(dec));
-	case AMF_OBJECT:
+	case AMF0_OBJECT:
 		return AMFValue(amf_load_object(dec));
-	case AMF_ECMA_ARRAY:
+	case AMF0_ECMA_ARRAY:
 		return AMFValue(amf_load_ecma(dec));
-	default:
+	case AMF0_NULL:
 		dec->pos++;
-		return AMFValue(AMFType(type));
+		return AMFValue(AMF_NULL);
+	default:
+		throw std::runtime_error("Unsupported AMF type");
 	}
 }
