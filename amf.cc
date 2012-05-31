@@ -29,6 +29,7 @@ AMFValue::AMFValue(AMFType type) :
 {
 	switch (m_type) {
 	case AMF_OBJECT:
+	case AMF_ECMA_ARRAY:
 		m_value.object = new amf_object_t;
 		break;
 	case AMF_NUMBER:
@@ -82,6 +83,7 @@ void AMFValue::destroy()
 		delete m_value.string;
 		break;
 	case AMF_OBJECT:
+	case AMF_ECMA_ARRAY:
 		delete m_value.object;
 		break;
 	default:
@@ -98,6 +100,7 @@ void AMFValue::operator = (const AMFValue &from)
 		m_value.string = new std::string(*from.m_value.string);
 		break;
 	case AMF_OBJECT:
+	case AMF_ECMA_ARRAY:
 		m_value.object = new amf_object_t(*from.m_value.object);
 		break;
 	case AMF_NUMBER:
@@ -187,6 +190,9 @@ void amf_write(std::string &out, const AMFValue &value)
 	case AMF_OBJECT:
 		amf_write(out, value.as_object());
 		break;
+	case AMF_ECMA_ARRAY:
+		amf_write_ecma(out, value.as_object());
+		break;
 	default:
 		out += char(value.type());
 		break;
@@ -274,6 +280,7 @@ amf_object_t amf_load_object(const std::string &data, size_t &pos)
 
 amf_object_t amf_load_ecma(const std::string &data, size_t &pos)
 {
+	/* ECMA array is the same as object, with 4 extra zero bytes */
 	amf_object_t object;
 	if (get_byte(data, pos) != AMF_ECMA_ARRAY) {
 		throw std::runtime_error("Expected an ECMA array");
@@ -307,6 +314,8 @@ AMFValue amf_load(const std::string &data, size_t &pos)
 		return AMFValue(amf_load_boolean(data, pos));
 	case AMF_OBJECT:
 		return AMFValue(amf_load_object(data, pos));
+	case AMF_ECMA_ARRAY:
+		return AMFValue(amf_load_ecma(data, pos));
 	default:
 		pos++;
 		return AMFValue(AMFType(type));
