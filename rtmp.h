@@ -41,6 +41,8 @@
 #define FLV_KEY_FRAME		0x01
 #define FLV_INTER_FRAME		0x02
 
+#define MEDIA_CHANNEL		8
+
 struct RTMP_Header {
 	uint8_t flags;
 	char timestamp[3];

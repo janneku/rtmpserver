@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <sys/poll.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #define APP_NAME	"live"
 
@@ -35,10 +36,10 @@ struct Client {
 	int fd;
 	bool playing; /* Wants to receive the stream? */
 	bool ready; /* Wants to receive and seen a keyframe */
-	size_t chunk_len;
 	RTMP_Message messages[64];
 	std::string buf;
 	std::string send_buf;
+	size_t chunk_len;
 };
 
 namespace {
@@ -48,6 +49,15 @@ Client *publisher = NULL;
 int listen_fd;
 std::vector<pollfd> poll_table;
 std::vector<Client *> clients;
+
+int set_nonblock(int fd, bool enabled)
+{
+	int flags = fcntl(fd, F_GETFL) & ~O_NONBLOCK;
+	if (enabled) {
+		flags |= O_NONBLOCK;
+	}
+	return fcntl(fd, F_SETFL, flags);
+}
 
 size_t recv_all(int fd, void *buf, size_t len)
 {
@@ -131,12 +141,11 @@ void try_to_send(Client *client)
 }
 
 void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
-		const std::string &buf, unsigned long timestamp = 0)
+		const std::string &buf, unsigned long timestamp = 0,
+		unsigned channel_num = 3)
 {
-	int channel = 4;
-
 	RTMP_Header header;
-	header.flags = (channel & 0x3f) | (0 << 6);
+	header.flags = (channel_num & 0x3f) | (0 << 6);
 	header.msg_type = type;
 	set_be24(header.timestamp, timestamp);
 	set_be24(header.msg_len, buf.size());
@@ -147,7 +156,7 @@ void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 	size_t pos = 0;
 	while (pos < buf.size()) {
 		if (pos) {
-			uint8_t flags = (channel & 0x3f) | (3 << 6);
+			uint8_t flags = (channel_num & 0x3f) | (3 << 6);
 			client->send_buf += char(flags);
 		}
 
@@ -204,6 +213,15 @@ void handle_connect(Client *client, double txid, Decoder *dec)
 	status.insert(std::make_pair("objectEncoding", 3.0));
 
 	send_reply(client, txid, version, status);
+
+/*
+	uint32_t chunk_len = htonl(1024);
+	std::string set_chunk((char *) &chunk_len, 4);
+	rtmp_send(client, MSG_SET_CHUNK, CONTROL_ID, set_chunk, 0,
+		  MEDIA_CHANNEL);
+
+	client->chunk_len = 1024;
+*/
 }
 
 void handle_fcpublish(Client *client, double txid, Decoder *dec)
@@ -413,7 +431,7 @@ void handle_invoke(Client *client, const RTMP_Message *msg, Decoder *dec)
 	}
 }
 
-void handle_message(Client *client, const RTMP_Message *msg)
+void handle_message(Client *client, RTMP_Message *msg)
 {
 	/*
 	debug("RTMP message %02x, len %zu, timestamp %ld\n", msg->type, msg->len,
@@ -472,7 +490,7 @@ void handle_message(Client *client, const RTMP_Message *msg)
 			Client *receiver = *i;
 			if (receiver != NULL && receiver->ready) {
 				rtmp_send(receiver, msg->type, STREAM_ID, msg->buf,
-					msg->timestamp);
+					msg->timestamp, MEDIA_CHANNEL);
 			}
 		}
 		break;
@@ -497,7 +515,7 @@ void handle_message(Client *client, const RTMP_Message *msg)
 				}
 				if (receiver->ready) {
 					rtmp_send(receiver, msg->type, STREAM_ID, msg->buf,
-						  msg->timestamp);
+						  msg->timestamp, MEDIA_CHANNEL);
 				}
 			}
 		}
@@ -650,6 +668,8 @@ Client *new_client()
 	}
 
 	do_handshake(client);
+
+	set_nonblock(fd, true);
 
 	pollfd entry;
 	entry.events = POLLIN;
