@@ -35,10 +35,10 @@ struct Client {
 	int fd;
 	bool playing; /* Wants to receive the stream? */
 	bool ready; /* Wants to receive and seen a keyframe */
-	size_t read_chunk_len;
-	size_t write_chunk_len;
+	size_t chunk_len;
 	RTMP_Message messages[64];
 	std::string buf;
+	std::string send_buf;
 };
 
 namespace {
@@ -112,6 +112,24 @@ void hexdump(const void *buf, size_t len)
 	}
 }
 
+void try_to_send(Client *client)
+{
+	size_t len = client->send_buf.size();
+	if (len > 4096)
+		len = 4096;
+
+	ssize_t written = send(client->fd, client->send_buf.data(), len, 0);
+	if (written < 0) {
+		if (errno == EAGAIN || errno == EINTR)
+			return;
+		throw std::runtime_error(strf("unable to write to a client: %s",
+						strerror(errno)));
+	}
+
+	client->send_buf.erase(client->send_buf.begin(),
+				client->send_buf.begin() + written);
+}
+
 void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 		const std::string &buf, unsigned long timestamp = 0)
 {
@@ -124,24 +142,24 @@ void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 	set_be24(header.msg_len, buf.size());
 	set_le32(header.endpoint, endpoint);
 
-	if (send_all(client->fd, &header, sizeof header) < sizeof header) {
-		throw std::runtime_error("Unable to write to a client");
-	}
+	client->send_buf.append((char *) &header, sizeof header);
 
 	size_t pos = 0;
 	while (pos < buf.size()) {
 		if (pos) {
 			uint8_t flags = (channel & 0x3f) | (3 << 6);
-			send_all(client->fd, &flags, 1);
+			client->send_buf += char(flags);
 		}
 
 		size_t chunk = buf.size() - pos;
-		if (chunk > client->write_chunk_len)
-			chunk = client->write_chunk_len;
-		send_all(client->fd, &buf[pos], chunk);
+		if (chunk > client->chunk_len)
+			chunk = client->chunk_len;
+		client->send_buf.append(buf, pos, chunk);
 		
 		pos += chunk;
 	}
+
+	try_to_send(client);
 }
 
 void send_reply(Client *client, double txid, const AMFValue &reply = AMFValue(),
@@ -157,8 +175,7 @@ void send_reply(Client *client, double txid, const AMFValue &reply = AMFValue(),
 	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke.buf);
 }
 
-void handle_connect(Client *client, double txid, const RTMP_Message *msg,
-		    Decoder *dec)
+void handle_connect(Client *client, double txid, Decoder *dec)
 {
 	amf_object_t params = amf_load_object(dec);
 	std::string app = get(params, std::string("app")).as_string();
@@ -189,8 +206,7 @@ void handle_connect(Client *client, double txid, const RTMP_Message *msg,
 	send_reply(client, txid, version, status);
 }
 
-void handle_fcpublish(Client *client, double txid, const RTMP_Message *msg,
-		      Decoder *dec)
+void handle_fcpublish(Client *client, double txid, Decoder *dec)
 {
 	if (publisher != NULL) {
 		throw std::runtime_error("Already have a publisher");
@@ -217,14 +233,12 @@ void handle_fcpublish(Client *client, double txid, const RTMP_Message *msg,
 	send_reply(client, txid);
 }
 
-void handle_createstream(Client *client, double txid, const RTMP_Message *msg,
-			 Decoder *dec)
+void handle_createstream(Client *client, double txid, Decoder *dec)
 {
 	send_reply(client, txid, AMFValue(), double(STREAM_ID));
 }
 
-void handle_publish(Client *client, double txid, const RTMP_Message *msg,
-		    Decoder *dec)
+void handle_publish(Client *client, double txid, Decoder *dec)
 {
 	amf_load(dec); /* NULL */
 
@@ -290,13 +304,8 @@ void start_playback(Client *client)
 	}
 }
 
-void handle_play(Client *client, double txid, const RTMP_Message *msg,
-		 Decoder *dec)
+void handle_play(Client *client, double txid, Decoder *dec)
 {
-	if (msg->endpoint != STREAM_ID) {
-		throw std::runtime_error("stream id mismatch");
-	}
-
 	amf_load(dec); /* NULL */
 
 	std::string path = amf_load_string(dec);
@@ -308,8 +317,7 @@ void handle_play(Client *client, double txid, const RTMP_Message *msg,
 	send_reply(client, txid);
 }
 
-void handle_play2(Client *client, double txid, const RTMP_Message *msg,
-		  Decoder *dec)
+void handle_play2(Client *client, double txid, Decoder *dec)
 {
 	amf_load(dec); /* NULL */
 
@@ -323,8 +331,7 @@ void handle_play2(Client *client, double txid, const RTMP_Message *msg,
 	send_reply(client, txid);
 }
 
-void handle_pause(Client *client, double txid, const RTMP_Message *msg,
-		  Decoder *dec)
+void handle_pause(Client *client, double txid, Decoder *dec)
 {
 	amf_load(dec); /* NULL */
 
@@ -352,7 +359,7 @@ void handle_pause(Client *client, double txid, const RTMP_Message *msg,
 	send_reply(client, txid);
 }
 
-void handle_setdataframe(Client *client, const RTMP_Message *msg, Decoder *dec)
+void handle_setdataframe(Client *client, Decoder *dec)
 {
 	if (client != publisher) {
 		throw std::runtime_error("not a publisher");
@@ -386,30 +393,32 @@ void handle_invoke(Client *client, const RTMP_Message *msg, Decoder *dec)
 
 	if (msg->endpoint == CONTROL_ID) {
 		if (method == "connect") {
-			handle_connect(client, txid, msg, dec);
+			handle_connect(client, txid, dec);
 		} else if (method == "FCPublish") {
-			handle_fcpublish(client, txid, msg, dec);
+			handle_fcpublish(client, txid, dec);
 		} else if (method == "createStream") {
-			handle_createstream(client, txid, msg, dec);
+			handle_createstream(client, txid, dec);
 		}
 
 	} else if (msg->endpoint == STREAM_ID) {
 		if (method == "publish") {
-			handle_publish(client, txid, msg, dec);
+			handle_publish(client, txid, dec);
 		} else if (method == "play") {
-			handle_play(client, txid, msg, dec);
+			handle_play(client, txid, dec);
 		} else if (method == "play2") {
-			handle_play2(client, txid, msg, dec);
+			handle_play2(client, txid, dec);
 		} else if (method == "pause") {
-			handle_pause(client, txid, msg, dec);
+			handle_pause(client, txid, dec);
 		}
 	}
 }
 
 void handle_message(Client *client, const RTMP_Message *msg)
 {
+	/*
 	debug("RTMP message %02x, len %zu, timestamp %ld\n", msg->type, msg->len,
 		msg->timestamp);
+	*/
 
 	size_t pos = 0;
 
@@ -418,8 +427,8 @@ void handle_message(Client *client, const RTMP_Message *msg)
 		if (pos + 4 > msg->buf.size()) {
 			throw std::runtime_error("Not enough data");
 		}
-		client->read_chunk_len = load_be32(&msg->buf[pos]);
-		debug("chunk size set to %zu\n", client->read_chunk_len);
+		client->chunk_len = load_be32(&msg->buf[pos]);
+		debug("chunk size set to %zu\n", client->chunk_len);
 		break;
 
 	case MSG_INVOKE: {
@@ -432,7 +441,6 @@ void handle_message(Client *client, const RTMP_Message *msg)
 		break;
 
 	case MSG_INVOKE3: {
-			hexdump(msg->buf.data(), msg->buf.size());
 			Decoder dec;
 			dec.version = 0;
 			dec.buf = msg->buf;
@@ -450,7 +458,7 @@ void handle_message(Client *client, const RTMP_Message *msg)
 			debug("notify %s\n", type.c_str());
 			if (msg->endpoint == STREAM_ID) {
 				if (type == "@setDataFrame") {
-					handle_setdataframe(client, msg, &dec);
+					handle_setdataframe(client, &dec);
 				}
 			}
 		}
@@ -554,7 +562,7 @@ void recv_from_client(Client *client)
 	} else if (got < 0) {
 		if (errno == EAGAIN || errno == EINTR)
 			return;
-		throw std::runtime_error(strf("recv() failed: %s",
+		throw std::runtime_error(strf("unable to read from a client: %s",
 					      strerror(errno)));
 	}
 	client->buf.append(chunk.begin(), chunk.begin() + got);
@@ -589,11 +597,11 @@ void recv_from_client(Client *client)
 		if (msg->len == 0) {
 			throw std::runtime_error("message without a header");
 		}
-		size_t chunklen = msg->len - msg->buf.size();
-		if (chunklen > client->read_chunk_len)
-			chunklen = client->read_chunk_len;
+		size_t chunk = msg->len - msg->buf.size();
+		if (chunk > client->chunk_len)
+			chunk = client->chunk_len;
 
-		if (client->buf.size() < header_len + chunklen) {
+		if (client->buf.size() < header_len + chunk) {
 			/* need more data */
 			break;
 		}
@@ -610,9 +618,9 @@ void recv_from_client(Client *client)
 		}
 
 		msg->buf.append(client->buf.begin() + header_len,
-				client->buf.begin() + (header_len + chunklen));
+				client->buf.begin() + (header_len + chunk));
 		client->buf.erase(client->buf.begin(),
-				  client->buf.begin() + (header_len + chunklen));
+				  client->buf.begin() + (header_len + chunk));
 
 		if (msg->buf.size() == msg->len) {
 			handle_message(client, msg);
@@ -635,8 +643,7 @@ Client *new_client()
 	client->playing = false;
 	client->ready = false;
 	client->fd = fd;
-	client->read_chunk_len = DEFAULT_CHUNK_LEN;
-	client->write_chunk_len = DEFAULT_CHUNK_LEN;
+	client->chunk_len = DEFAULT_CHUNK_LEN;
 	for (int i = 0; i < 64; ++i) {
 		client->messages[i].timestamp = 0;
 		client->messages[i].len = 0;
@@ -676,6 +683,18 @@ void close_client(Client *client, size_t i)
 
 void do_poll()
 {
+	for (size_t i = 0; i < poll_table.size(); ++i) {
+		Client *client = clients[i];
+		if (client != NULL) {
+			if (!client->send_buf.empty()) {
+				debug("waiting for pollout\n");
+				poll_table[i].events = POLLIN | POLLOUT;
+			} else {
+				poll_table[i].events = POLLIN;
+			}
+		}
+	}
+
 	if (poll(&poll_table[0], poll_table.size(), -1) < 0) {
 		if (errno == EAGAIN || errno == EINTR)
 			return;
@@ -684,8 +703,18 @@ void do_poll()
 	}
 
 	for (size_t i = 0; i < poll_table.size(); ++i) {
+		Client *client = clients[i];
+		if (poll_table[i].revents & POLLOUT) {
+			try {
+				try_to_send(client);
+			} catch (const std::runtime_error &e) {
+				printf("client error: %s\n", e.what());
+				close_client(client, i);
+				--i;
+				continue;
+			}
+		}
 		if (poll_table[i].revents & POLLIN) {
-			Client *client = clients[i];
 			if (client == NULL) {
 				new_client();
 			} else try {
