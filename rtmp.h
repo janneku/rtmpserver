@@ -12,7 +12,7 @@
 #define SIG_LENGTH	1536
 
 #define MSG_SET_CHUNK		0x01
-#define MSG_ACK			0x03
+#define MSG_BYTES_READ		0x03
 #define MSG_USER_CONTROL	0x04
 #define MSG_RESPONSE		0x05
 #define MSG_REQUEST		0x06
@@ -38,10 +38,12 @@
 #define CONTROL_ID		0
 #define STREAM_ID		1337
 
+#define CHAN_CONTROL		2
+#define CHAN_RESULT		3
+#define CHAN_STREAM		4
+
 #define FLV_KEY_FRAME		0x01
 #define FLV_INTER_FRAME		0x02
-
-#define MEDIA_CHANNEL		8
 
 struct RTMP_Header {
 	uint8_t flags;

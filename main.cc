@@ -19,6 +19,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/poll.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -38,8 +39,10 @@ struct Client {
 	bool ready; /* Wants to receive and seen a keyframe */
 	RTMP_Message messages[64];
 	std::string buf;
-	std::string send_buf;
+	std::string send_queue;
 	size_t chunk_len;
+	uint32_t written_seq;
+	uint32_t read_seq;
 };
 
 namespace {
@@ -124,11 +127,11 @@ void hexdump(const void *buf, size_t len)
 
 void try_to_send(Client *client)
 {
-	size_t len = client->send_buf.size();
+	size_t len = client->send_queue.size();
 	if (len > 4096)
 		len = 4096;
 
-	ssize_t written = send(client->fd, client->send_buf.data(), len, 0);
+	ssize_t written = send(client->fd, client->send_queue.data(), len, 0);
 	if (written < 0) {
 		if (errno == EAGAIN || errno == EINTR)
 			return;
@@ -136,14 +139,21 @@ void try_to_send(Client *client)
 						strerror(errno)));
 	}
 
-	client->send_buf.erase(client->send_buf.begin(),
-				client->send_buf.begin() + written);
+	client->send_queue.erase(0, written);
 }
 
 void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 		const std::string &buf, unsigned long timestamp = 0,
-		unsigned channel_num = 3)
+		int channel_num = CHAN_CONTROL)
 {
+	if (endpoint == STREAM_ID) {
+		/*
+		 * For some unknown reason, stream-related msgs must be sent
+		 * on a specific channel.
+		 */
+		channel_num = CHAN_STREAM;
+	}
+
 	RTMP_Header header;
 	header.flags = (channel_num & 0x3f) | (0 << 6);
 	header.msg_type = type;
@@ -151,20 +161,24 @@ void rtmp_send(Client *client, uint8_t type, uint32_t endpoint,
 	set_be24(header.msg_len, buf.size());
 	set_le32(header.endpoint, endpoint);
 
-	client->send_buf.append((char *) &header, sizeof header);
+	client->send_queue.append((char *) &header, sizeof header);
+	client->written_seq += sizeof header;
 
 	size_t pos = 0;
 	while (pos < buf.size()) {
 		if (pos) {
 			uint8_t flags = (channel_num & 0x3f) | (3 << 6);
-			client->send_buf += char(flags);
+			client->send_queue += char(flags);
+
+			client->written_seq += 1;
 		}
 
 		size_t chunk = buf.size() - pos;
 		if (chunk > client->chunk_len)
 			chunk = client->chunk_len;
-		client->send_buf.append(buf, pos, chunk);
-		
+		client->send_queue.append(buf, pos, chunk);
+
+		client->written_seq += chunk;
 		pos += chunk;
 	}
 
@@ -181,7 +195,7 @@ void send_reply(Client *client, double txid, const AMFValue &reply = AMFValue(),
 	amf_write(&invoke, txid);
 	amf_write(&invoke, reply);
 	amf_write(&invoke, status);
-	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke.buf);
+	rtmp_send(client, MSG_INVOKE, CONTROL_ID, invoke.buf, 0, CHAN_RESULT);
 }
 
 void handle_connect(Client *client, double txid, Decoder *dec)
@@ -441,6 +455,15 @@ void handle_message(Client *client, RTMP_Message *msg)
 	size_t pos = 0;
 
 	switch (msg->type) {
+	case MSG_BYTES_READ:
+		if (pos + 4 > msg->buf.size()) {
+			throw std::runtime_error("Not enough data");
+		}
+		client->read_seq = load_be32(&msg->buf[pos]);
+		debug("%d in queue\n",
+			int(client->written_seq - client->read_seq));
+		break;
+
 	case MSG_SET_CHUNK:
 		if (pos + 4 > msg->buf.size()) {
 			throw std::runtime_error("Not enough data");
@@ -489,8 +512,8 @@ void handle_message(Client *client, RTMP_Message *msg)
 		FOR_EACH(std::vector<Client *>, i, clients) {
 			Client *receiver = *i;
 			if (receiver != NULL && receiver->ready) {
-				rtmp_send(receiver, msg->type, STREAM_ID, msg->buf,
-					msg->timestamp, MEDIA_CHANNEL);
+				rtmp_send(receiver, MSG_AUDIO, STREAM_ID,
+					  msg->buf, msg->timestamp);
 			}
 		}
 		break;
@@ -514,8 +537,9 @@ void handle_message(Client *client, RTMP_Message *msg)
 					receiver->ready = true;
 				}
 				if (receiver->ready) {
-					rtmp_send(receiver, msg->type, STREAM_ID, msg->buf,
-						  msg->timestamp, MEDIA_CHANNEL);
+					rtmp_send(receiver, MSG_VIDEO,
+						  STREAM_ID, msg->buf,
+						  msg->timestamp);
 				}
 			}
 		}
@@ -569,6 +593,9 @@ void do_handshake(Client *client)
 	if (memcmp(serversig, clientsig, SIG_LENGTH)) {
 		throw std::runtime_error("handshake failed");
 	}
+
+	client->read_seq = 1 + SIG_LENGTH * 2;
+	client->written_seq = 1 + SIG_LENGTH * 2;
 }
 
 void recv_from_client(Client *client)
@@ -583,7 +610,7 @@ void recv_from_client(Client *client)
 		throw std::runtime_error(strf("unable to read from a client: %s",
 					      strerror(errno)));
 	}
-	client->buf.append(chunk.begin(), chunk.begin() + got);
+	client->buf.append(chunk, 0, got);
 
 	while (!client->buf.empty()) {
 		uint8_t flags = client->buf[0];
@@ -635,10 +662,8 @@ void recv_from_client(Client *client)
 			msg->timestamp = ts;
 		}
 
-		msg->buf.append(client->buf.begin() + header_len,
-				client->buf.begin() + (header_len + chunk));
-		client->buf.erase(client->buf.begin(),
-				  client->buf.begin() + (header_len + chunk));
+		msg->buf.append(client->buf, header_len, chunk);
+		client->buf.erase(0, header_len + chunk);
 
 		if (msg->buf.size() == msg->len) {
 			handle_message(client, msg);
@@ -661,6 +686,8 @@ Client *new_client()
 	client->playing = false;
 	client->ready = false;
 	client->fd = fd;
+	client->written_seq = 0;
+	client->read_seq = 0;
 	client->chunk_len = DEFAULT_CHUNK_LEN;
 	for (int i = 0; i < 64; ++i) {
 		client->messages[i].timestamp = 0;
@@ -706,7 +733,7 @@ void do_poll()
 	for (size_t i = 0; i < poll_table.size(); ++i) {
 		Client *client = clients[i];
 		if (client != NULL) {
-			if (!client->send_buf.empty()) {
+			if (!client->send_queue.empty()) {
 				debug("waiting for pollout\n");
 				poll_table[i].events = POLLIN | POLLOUT;
 			} else {
