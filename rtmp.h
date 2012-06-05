@@ -9,7 +9,7 @@
 
 #define HANDSHAKE_PLAINTEXT	0x03
 
-#define SIG_LENGTH	1536
+#define RANDOM_LEN		(1536 - 8)
 
 #define MSG_SET_CHUNK		0x01
 #define MSG_BYTES_READ		0x03
@@ -44,6 +44,11 @@
 
 #define FLV_KEY_FRAME		0x01
 #define FLV_INTER_FRAME		0x02
+
+struct Handshake {
+	uint8_t flags[8];
+	uint8_t random[RANDOM_LEN];
+} PACKED;
 
 struct RTMP_Header {
 	uint8_t flags;

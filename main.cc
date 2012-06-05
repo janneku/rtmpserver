@@ -560,8 +560,8 @@ void handle_message(Client *client, RTMP_Message *msg)
 /* TODO: Make this asynchronous */
 void do_handshake(Client *client)
 {
-	uint8_t serversig[SIG_LENGTH];
-	uint8_t clientsig[SIG_LENGTH];
+	Handshake serversig;
+	Handshake clientsig;
 
 	uint8_t c;
 	if (recv_all(client->fd, &c, 1) < 1)
@@ -573,29 +573,29 @@ void do_handshake(Client *client)
 	if (send_all(client->fd, &c, 1) < 1)
 		return;
 
-	memset(serversig, 0, sizeof serversig);
-	serversig[0] = 0x03;
-	for (int i = 8; i < SIG_LENGTH; ++i) {
-		serversig[i] = rand();
+	memset(&serversig, 0, sizeof serversig);
+	serversig.flags[0] = 0x03;
+	for (int i = 0; i < RANDOM_LEN; ++i) {
+		serversig.random[i] = rand();
 	}
 
-	if (send_all(client->fd, serversig, SIG_LENGTH) != SIG_LENGTH)
+	if (send_all(client->fd, &serversig, sizeof serversig) < sizeof serversig)
 		return;
 
 	/* Echo client's signature back */
-	if (recv_all(client->fd, clientsig, SIG_LENGTH) != SIG_LENGTH)
+	if (recv_all(client->fd, &clientsig, sizeof serversig) < sizeof serversig)
 		return;
-	if (send_all(client->fd, clientsig, SIG_LENGTH) != SIG_LENGTH)
+	if (send_all(client->fd, &clientsig, sizeof serversig) < sizeof serversig)
 		return;
 
-	if (recv_all(client->fd, clientsig, SIG_LENGTH) != SIG_LENGTH)
+	if (recv_all(client->fd, &clientsig, sizeof serversig) < sizeof serversig)
 		return;
-	if (memcmp(serversig, clientsig, SIG_LENGTH)) {
-		throw std::runtime_error("handshake failed");
+	if (memcmp(serversig.random, clientsig.random, RANDOM_LEN) != 0) {
+		throw std::runtime_error("invalid handshake");
 	}
 
-	client->read_seq = 1 + SIG_LENGTH * 2;
-	client->written_seq = 1 + SIG_LENGTH * 2;
+	client->read_seq = 1 + sizeof serversig * 2;
+	client->written_seq = 1 + sizeof serversig * 2;
 }
 
 void recv_from_client(Client *client)
@@ -694,7 +694,14 @@ Client *new_client()
 		client->messages[i].len = 0;
 	}
 
-	do_handshake(client);
+	try {
+		do_handshake(client);
+	} catch (const std::runtime_error &e) {
+		printf("handshake failed: %s\n", e.what());
+		close(fd);
+		delete client;
+		return NULL;
+	}
 
 	set_nonblock(fd, true);
 
