@@ -110,28 +110,30 @@ void AMFValue::destroy()
 
 void AMFValue::operator = (const AMFValue &from)
 {
-	destroy();
-	m_type = from.m_type;
-	switch (m_type) {
-	case AMF_STRING:
-		m_value.string = new std::string(*from.m_value.string);
-		break;
-	case AMF_OBJECT:
-	case AMF_ECMA_ARRAY:
-		m_value.object = new amf_object_t(*from.m_value.object);
-		break;
-	case AMF_NUMBER:
-		m_value.number = from.m_value.number;
-		break;
-	case AMF_INTEGER:
-		m_value.integer = from.m_value.integer;
-		break;
-	case AMF_BOOLEAN:
-		m_value.boolean = from.m_value.boolean;
-		break;
-	default:
-		break;
-	}
+        if (this != &from) {
+                destroy();
+                m_type = from.m_type;
+                switch (m_type) {
+                case AMF_STRING:
+                        m_value.string = new std::string(*from.m_value.string);
+                        break;
+                case AMF_OBJECT:
+                case AMF_ECMA_ARRAY:
+                        m_value.object = new amf_object_t(*from.m_value.object);
+                        break;
+                case AMF_NUMBER:
+                        m_value.number = from.m_value.number;
+                        break;
+                case AMF_INTEGER:
+                        m_value.integer = from.m_value.integer;
+                        break;
+                case AMF_BOOLEAN:
+                        m_value.boolean = from.m_value.boolean;
+                        break;
+                default:
+                        break;
+                }
+        }
 }
 
 void amf_write(Encoder *enc, const std::string &s)
