@@ -763,7 +763,9 @@ void do_poll()
 				try_to_send(client);
 			} catch (const std::runtime_error &e) {
 				printf("client error: %s\n", e.what());
-				close_client(client, i);
+                                if (client) {
+                                    close_client(client, i);
+                                }
 				--i;
 				continue;
 			}
